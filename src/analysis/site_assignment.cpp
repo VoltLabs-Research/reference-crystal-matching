@@ -61,12 +61,15 @@ Vector3& overrideAt(std::vector<Vector3>& overrides, std::size_t atomIndex, int 
 }
 
 // Phase 1 — assign every atom to the reference basis site whose neighbour shell
-// (in the grain frame) best matches the atom's measured neighbourhood.
+// (in the grain frame) best matches the atom's measured neighbourhood. Also
+// fills perAtomResidual: the RMS shell deviation (Angstrom) of the chosen site,
+// RCM's continuous defectness signal (-1 where unassigned).
 std::vector<int> assignBasisSites(
     const SiteMatchInputs& inputs,
     double cutoff,
     const AllAtomNeighbors& neighbors,
-    AssignmentStats& stats)
+    AssignmentStats& stats,
+    std::vector<double>& perAtomResidual)
 {
     const std::size_t atomCount = static_cast<std::size_t>(inputs.frame.natoms);
     const PerfectReference& reference = inputs.reference;
@@ -82,6 +85,7 @@ std::vector<int> assignBasisSites(
     stats.edgesTotal = 0;
     stats.atomsBySpeciesUnassigned = 0;
 
+    perAtomResidual.assign(atomCount, -1.0);
     std::vector<int> basisSiteOfAtom(atomCount, -1);
     for(std::size_t atomIndex = 0; atomIndex < atomCount; ++atomIndex){
         const int start = neighbors.offsets[atomIndex];
@@ -138,6 +142,9 @@ std::vector<int> assignBasisSites(
             continue;
         }
         basisSiteOfAtom[atomIndex] = bestSite;
+        // bestScore is the sum of squared shell deviations over neighborCount
+        // slots; RMS (Angstrom) is the interpretable per-atom defectness.
+        perAtomResidual[atomIndex] = std::sqrt(bestScore / static_cast<double>(neighborCount));
     }
     if(stats.minNeighborCount == std::numeric_limits<int>::max()){
         stats.minNeighborCount = 0;
@@ -158,7 +165,8 @@ std::vector<double> computeIdealOverrides(
 {
     const std::size_t atomCount = static_cast<std::size_t>(inputs.frame.natoms);
     const PerfectReference& reference = inputs.reference;
-    const double cellLengths[3] = {reference.cellLengthA, reference.cellLengthB, reference.cellLengthC};
+    const Matrix3& cellMatrix = reference.cellMatrix;
+    const Matrix3 cellInverse = cellMatrix.inverse();
 
     stats.edgesWithIdealVector = 0;
     std::vector<double> snapResiduals;
@@ -182,15 +190,19 @@ std::vector<double> computeIdealOverrides(
             const Vector3& neighborFractional = reference.sites[static_cast<std::size_t>(neighborBasisSite)].fractional;
             const Vector3 crystalFrameDelta = inputs.grainRotationTransposed * neighbors.deltas[static_cast<std::size_t>(slot)];
 
-            double idealFractionalDelta[3];
+            // Express the measured bond in fractional coords, then pick the
+            // periodic image of the (neighborSite - atomSite) basis difference
+            // closest to it. Using the full cell matrix (not per-axis lengths)
+            // is what makes non-orthogonal cells and multi-site bases work: the
+            // ideal vector is reconstructed in the true crystal basis.
+            const Vector3 measuredFractional = cellInverse * crystalFrameDelta;
+            const Vector3 basisFractional = neighborFractional - atomFractional;
+            Vector3 idealFractional;
             for(int axis = 0; axis < 3; ++axis){
-                const double measuredFractional = crystalFrameDelta[axis] / cellLengths[axis];
-                const double basisFractional = neighborFractional[axis] - atomFractional[axis];
-                const double imageOffset = std::round(measuredFractional - basisFractional);
-                idealFractionalDelta[axis] = (basisFractional + imageOffset) * cellLengths[axis];
+                const double imageOffset = std::round(measuredFractional[axis] - basisFractional[axis]);
+                idealFractional[axis] = basisFractional[axis] + imageOffset;
             }
-            const Vector3 idealLabFrame = inputs.grainRotation *
-                Vector3(idealFractionalDelta[0], idealFractionalDelta[1], idealFractionalDelta[2]);
+            const Vector3 idealLabFrame = inputs.grainRotation * (cellMatrix * idealFractional);
 
             overrideAt(overrides, atomIndex, slot - start) = idealLabFrame;
             ++stats.edgesWithIdealVector;
@@ -333,7 +345,7 @@ CutoffAssignment assignForCutoff(const SiteMatchInputs& inputs, double cutoff){
 
     const BulkRegion bulk = BulkRegion::of(inputs.frame, atomCount);
 
-    out.basisSiteOfAtom = assignBasisSites(inputs, cutoff, out.neighbors, out.stats);
+    out.basisSiteOfAtom = assignBasisSites(inputs, cutoff, out.neighbors, out.stats, out.perAtomResidual);
     const std::vector<double> snapResiduals =
         computeIdealOverrides(inputs, out.neighbors, out.basisSiteOfAtom, bulk, out.overrides, out.stats);
     enforceReciprocity(out.neighbors, out.overrides, out.stats);

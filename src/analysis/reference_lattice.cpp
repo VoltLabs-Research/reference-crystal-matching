@@ -20,6 +20,7 @@ PerfectReference buildPerfectReference(const std::string& referenceFile, double 
     double boxXLow = 0, boxXHigh = 0;
     double boxYLow = 0, boxYHigh = 0;
     double boxZLow = 0, boxZHigh = 0;
+    double tiltXY = 0, tiltXZ = 0, tiltYZ = 0;   // non-orthogonal cell support
     bool haveX = false, haveY = false, haveZ = false;
 
     std::vector<int> species;
@@ -35,6 +36,11 @@ PerfectReference buildPerfectReference(const std::string& referenceFile, double 
         const std::string trimmed = line.substr(firstNonSpace);
 
         if(!insideAtomsSection){
+            if(trimmed.find("xy") != std::string::npos && trimmed.find("xz") != std::string::npos){
+                std::istringstream stream(trimmed);
+                stream >> tiltXY >> tiltXZ >> tiltYZ;
+                continue;
+            }
             if(trimmed.find("xlo") != std::string::npos){
                 std::istringstream stream(trimmed);
                 stream >> boxXLow >> boxXHigh;
@@ -99,7 +105,16 @@ PerfectReference buildPerfectReference(const std::string& referenceFile, double 
     reference.cellLengthB = lengthB;
     reference.cellLengthC = lengthC;
 
-    const double cellLengths[3] = {lengthA, lengthB, lengthC};
+    // LAMMPS triclinic convention: cell edge vectors as matrix columns
+    //   a = (lengthA, 0, 0), b = (xy, lengthB, 0), c = (xz, yz, lengthC).
+    // For an orthogonal cell the tilts are 0 and this is diagonal.
+    const Matrix3 cellMatrix(
+        Vector3(lengthA, 0.0, 0.0),
+        Vector3(tiltXY, lengthB, 0.0),
+        Vector3(tiltXZ, tiltYZ, lengthC));
+    reference.cellMatrix = cellMatrix;
+    const Matrix3 cellInverse = cellMatrix.inverse();
+
     const int siteCount = static_cast<int>(positions.size());
     const int imageRange = static_cast<int>(std::ceil(cutoff / std::min({lengthA, lengthB, lengthC}))) + 1;
 
@@ -107,22 +122,25 @@ PerfectReference buildPerfectReference(const std::string& referenceFile, double 
     for(int siteIndex = 0; siteIndex < siteCount; ++siteIndex){
         BasisSite& site = reference.sites[static_cast<std::size_t>(siteIndex)];
         site.species = species[static_cast<std::size_t>(siteIndex)];
-        site.fractional = Vector3(
-            (positions[siteIndex][0] - boxXLow) / lengthA,
-            (positions[siteIndex][1] - boxYLow) / lengthB,
-            (positions[siteIndex][2] - boxZLow) / lengthC);
+        const Vector3 cart(positions[siteIndex][0] - boxXLow,
+                           positions[siteIndex][1] - boxYLow,
+                           positions[siteIndex][2] - boxZLow);
+        site.fractional = cellInverse * cart;
 
         for(int otherIndex = 0; otherIndex < siteCount; ++otherIndex){
+            const Vector3 base(positions[otherIndex][0] - positions[siteIndex][0],
+                               positions[otherIndex][1] - positions[siteIndex][1],
+                               positions[otherIndex][2] - positions[siteIndex][2]);
             for(int imageX = -imageRange; imageX <= imageRange; ++imageX){
                 for(int imageY = -imageRange; imageY <= imageRange; ++imageY){
                     for(int imageZ = -imageRange; imageZ <= imageRange; ++imageZ){
                         if(siteIndex == otherIndex && imageX == 0 && imageY == 0 && imageZ == 0){
                             continue;
                         }
-                        const Vector3 delta(
-                            positions[otherIndex][0] + imageX * cellLengths[0] - positions[siteIndex][0],
-                            positions[otherIndex][1] + imageY * cellLengths[1] - positions[siteIndex][1],
-                            positions[otherIndex][2] + imageZ * cellLengths[2] - positions[siteIndex][2]);
+                        const Vector3 delta = base + cellMatrix *
+                            Vector3(static_cast<double>(imageX),
+                                    static_cast<double>(imageY),
+                                    static_cast<double>(imageZ));
                         const double distance = delta.length();
                         if(distance > 0.1 && distance < cutoff){
                             site.shell.emplace_back(species[static_cast<std::size_t>(otherIndex)], delta);
@@ -139,19 +157,20 @@ PerfectReference buildPerfectReference(const std::string& referenceFile, double 
 
 std::vector<Vector3> buildIdealNeighborVectors(const AnchorReference& anchorReference){
     constexpr double neighborCutoff = 6.15;
-    const double lengthA = anchorReference.cellLengthA;
-    const double lengthB = anchorReference.cellLengthB;
-    const double lengthC = anchorReference.cellLengthC;
+    const Matrix3& cellMatrix = anchorReference.cellMatrix;
 
+    // Cartesian position of a fractional coord = cellMatrix * fractional, which
+    // reduces to per-axis scaling for an orthogonal cell and handles tilt
+    // (HCP/A7 primitive cells) for non-orthogonal ones.
     std::vector<Vector3> replicatedPositions;
     for(const Vector3& fractional : anchorReference.idealFractional){
         for(int imageX = -2; imageX <= 2; ++imageX){
             for(int imageY = -2; imageY <= 2; ++imageY){
                 for(int imageZ = -2; imageZ <= 2; ++imageZ){
-                    replicatedPositions.emplace_back(
-                        (fractional.x() + imageX) * lengthA,
-                        (fractional.y() + imageY) * lengthB,
-                        (fractional.z() + imageZ) * lengthC);
+                    replicatedPositions.push_back(cellMatrix * Vector3(
+                        fractional.x() + imageX,
+                        fractional.y() + imageY,
+                        fractional.z() + imageZ));
                 }
             }
         }
@@ -159,7 +178,7 @@ std::vector<Vector3> buildIdealNeighborVectors(const AnchorReference& anchorRefe
 
     std::vector<Vector3> idealVectors;
     for(const Vector3& fractional : anchorReference.idealFractional){
-        const Vector3 center(fractional.x() * lengthA, fractional.y() * lengthB, fractional.z() * lengthC);
+        const Vector3 center = cellMatrix * fractional;
         for(const Vector3& replicated : replicatedPositions){
             const Vector3 delta = replicated - center;
             const double distance = delta.length();

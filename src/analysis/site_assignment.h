@@ -42,6 +42,11 @@ struct CutoffAssignment{
     AllAtomNeighbors neighbors;
     std::vector<Vector3> overrides;     // atomCount * MAX_NEIGHBORS, row-major
     std::vector<int> basisSiteOfAtom;   // atomCount; -1 = unassigned
+    // Per-atom RMS deviation (Angstrom) of the atom's neighbour shell from the
+    // best-matching reference site. Low = bulk crystal; high = surface or
+    // dislocation core. This is RCM's continuous "defectness" signal (the
+    // analogue of PTM/CNA's OTHER classification). -1 if unassigned.
+    std::vector<double> perAtomResidual;
     AssignmentStats stats;
     double snapResidualP99 = std::numeric_limits<double>::max();
 };

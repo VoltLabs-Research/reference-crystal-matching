@@ -45,6 +45,11 @@ struct FullCrystalContextResult{
     double metricRescaleX = 1.0, metricRescaleY = 1.0, metricRescaleZ = 1.0;
 
     std::shared_ptr<ParticleProperty> structureTypesStorage;
+
+    // Per-atom RMS deviation from the best-matching reference site (Angstrom);
+    // RCM's continuous defectness signal (low = bulk, high = surface / defect
+    // core). -1 where unassigned. Empty if not computed.
+    std::vector<double> perAtomResidual;
 };
 
 FullCrystalContextResult buildFullCrystalContext(

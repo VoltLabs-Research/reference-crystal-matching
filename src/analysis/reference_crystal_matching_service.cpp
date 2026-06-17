@@ -10,6 +10,7 @@
 #include <yaml-cpp/yaml.h>
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
@@ -48,7 +49,21 @@ bool resolveAtomSpecies(const LammpsParser::Frame& frame,
         return true;
     }
 
-    // Fall back to frame.types only if it carries real (non-uniform) values.
+    // Fall back to frame.types. A non-uniform frame.types is always real. A
+    // *uniform* frame.types is ambiguous: it is either a genuine single-species
+    // crystal (FCC/BCC/HCP/A7 — every atom legitimately type 1) or the LAMMPS
+    // "species" bug (a dump whose species live in a column the parser does not
+    // map to frame.types, leaving it defaulted to all-1).
+    //
+    // Discriminate by provenance — a real "type" column means the uniform value
+    // is authoritative:
+    //   * dump file: the parser records its columns in atomColumnOrder; accept
+    //     when it lists "type".
+    //   * data file (.lmp): columns are implicit (atomColumnOrder is cleared),
+    //     but a real "type" column is always present, marked by the "atom types"
+    //     header.
+    // A dump that has neither (e.g. only a "species" column) with uniform types
+    // is the bug, and is rejected.
     if(frame.types.size() == n){
         bool uniform = true;
         for(std::size_t i = 1; i < n && uniform; ++i){
@@ -56,7 +71,11 @@ bool resolveAtomSpecies(const LammpsParser::Frame& frame,
                 uniform = false;
             }
         }
-        if(!uniform){
+        const bool hasTypeColumn =
+            std::find(frame.atomColumnOrder.begin(), frame.atomColumnOrder.end(), "type")
+                != frame.atomColumnOrder.end();
+        const bool isDataFile = frame.findHeaderProperty("atom types") != nullptr;
+        if(!uniform || hasTypeColumn || isDataFile){
             out = frame.types;
             return true;
         }
@@ -258,13 +277,27 @@ json ReferenceCrystalMatchingService::compute(
 
         // Per-atom display table for the "Structure Identification" exposure
         // (id, x/y/z, structure_name, structure_id, cluster_id, topology_name).
-        // The sublattice has a single matched type, so the default resolver +
-        // no extra columns are sufficient.
+        // RCM assigns every atom the same synthetic structure type (it is not a
+        // local classifier — DXA finds dislocations by Burgers-circuit closure,
+        // not by OTHER atoms). The per-atom defect signal is instead the RMS
+        // deviation from the reference site, emitted here as rcm_residual: low
+        // in the bulk crystal, high at surfaces and dislocation cores.
         if(!outputBase.empty()){
+            const std::vector<double>& residual = fc.perAtomResidual;
+            StructureIdentificationExport::AtomColumnWriter writeResidual;
+            if(!residual.empty()){
+                writeResidual = [&residual](ColumnarAtomWriter& writer,
+                                            std::size_t atomIndex, int /*structureType*/){
+                    const double r = atomIndex < residual.size() ? residual[atomIndex] : -1.0;
+                    writer.field("rcm_residual", r);
+                };
+            }
             StructureIdentificationExport::streamStructureIdentificationToParquet(
                 outputBase + "_atoms.parquet",
                 frame,
-                analysis
+                analysis,
+                {},
+                writeResidual
             );
         }
 

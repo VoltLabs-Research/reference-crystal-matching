@@ -1,5 +1,6 @@
 #pragma once
 
+#include <volt/math/matrix3.h>
 #include <volt/math/vector3.h>
 
 #include <string>
@@ -16,11 +17,14 @@ struct BasisSite{
     std::vector<std::pair<int, Vector3>> shell;
 };
 
-// The perfect reference crystal parsed from a LAMMPS data file: cell lengths +
-// every basis site with its precomputed neighbour shell.
+// The perfect reference crystal parsed from a LAMMPS data file: the full cell
+// matrix (columns = cell edge vectors a,b,c, including tilt for non-orthogonal
+// cells) + every basis site with its precomputed neighbour shell. cellLength*
+// are the edge magnitudes, kept for logging / rho heuristics.
 struct PerfectReference{
     bool ok = false;
     std::string message;
+    Matrix3 cellMatrix = Matrix3(Matrix3::Identity{});
     double cellLengthA = 0;
     double cellLengthB = 0;
     double cellLengthC = 0;
@@ -31,6 +35,7 @@ struct PerfectReference{
 // whose dense, near-isotropic sublattice fixes the grain orientation. (Any
 // species works; "anchor" is the role, not a chemistry claim.)
 struct AnchorReference{
+    Matrix3 cellMatrix = Matrix3(Matrix3::Identity{});
     double cellLengthA = 0;
     double cellLengthB = 0;
     double cellLengthC = 0;

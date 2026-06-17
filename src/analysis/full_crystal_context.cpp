@@ -49,7 +49,12 @@ FullCrystalContextResult buildFullCrystalContext(
         referenceCellMin = std::min({cellOnly.cellLengthA, cellOnly.cellLengthB, cellOnly.cellLengthC});
     }
 
-    const double referenceReach = std::max(params.bondCutoff, 0.9 * referenceCellMin);
+    // Reference shell reach. 0.9*cellMin works for cells whose edge ~ the first
+    // neighbour distance (conventional multi-atom cells). For a *primitive* cell
+    // (1-atom Bravais: FCC/BCC/HCP/A7) the shortest edge can be the neighbour
+    // distance itself, so 0.9*cellMin would miss the first shell entirely; reach
+    // out to 1.8*cellMin to guarantee the nearest neighbours are captured.
+    const double referenceReach = std::max(params.bondCutoff, 1.8 * referenceCellMin);
     const PerfectReference reference = buildPerfectReference(params.referenceFile, referenceReach);
     if(!reference.ok){
         result.message = "perfect reference: " + reference.message;
@@ -67,6 +72,7 @@ FullCrystalContextResult buildFullCrystalContext(
     }
 
     AnchorReference anchorReference;
+    anchorReference.cellMatrix = reference.cellMatrix;
     anchorReference.cellLengthA = reference.cellLengthA;
     anchorReference.cellLengthB = reference.cellLengthB;
     anchorReference.cellLengthC = reference.cellLengthC;
@@ -106,19 +112,35 @@ FullCrystalContextResult buildFullCrystalContext(
 
     const double rho = ambiguityRho(reference.cellLengthA, reference.cellLengthB, reference.cellLengthC);
 
+    // Shortest neighbour distance in the reference shell. For a conventional
+    // multi-atom cell this is < cellMin; for a *primitive* Bravais cell
+    // (FCC/BCC/HCP/A7) it can exceed cellMin, in which case the cellMin-based
+    // sweep below would never try a cutoff large enough to see the first shell.
+    double firstNeighborDist = 0.0;
+    for(const BasisSite& site : reference.sites){
+        for(const auto& [shellSpecies, shellVector] : site.shell){
+            const double d = shellVector.length();
+            if(firstNeighborDist <= 0.0 || d < firstNeighborDist){
+                firstNeighborDist = d;
+            }
+        }
+    }
+
     const SiteMatchInputs matchInputs{
         frame, reference, atomSpecies, grainRotation, grainRotationTransposed};
 
-    // Candidate cutoffs: the explicit one if given, else a descending sweep from
-    // 0.85*cellMin down to ~2.2 A. The first cutoff whose bulk snap p99 falls
-    // below rho (unambiguous assignment) wins; failing that, the tightest.
+    // Candidate cutoffs: the explicit one if given, else a descending sweep.
+    // High end is the larger of 0.85*cellMin (conventional cells) and
+    // 1.4*firstNeighbour (primitive cells, whose cell edge ~ neighbour distance)
+    // so the first coordination shell is always reachable. The first cutoff
+    // whose bulk snap p99 falls below rho wins; failing that, the tightest.
     std::vector<double> candidates;
     if(params.bondCutoff > 0.0){
         candidates.push_back(params.bondCutoff);
     }else{
         const double cellMin = std::min({reference.cellLengthA, reference.cellLengthB, reference.cellLengthC});
         const double step = std::max(0.1, cellMin / 24.0);
-        const double highestCutoff = 0.85 * cellMin;
+        const double highestCutoff = std::max(0.85 * cellMin, 1.4 * firstNeighborDist);
         const double lowestCutoff = std::max(step, 2.2);
         for(double cutoff = highestCutoff; cutoff >= lowestCutoff - 1e-9; cutoff -= step){
             candidates.push_back(cutoff);
@@ -155,6 +177,7 @@ FullCrystalContextResult buildFullCrystalContext(
     result.atomsBySpeciesUnassigned = stats.atomsBySpeciesUnassigned;
     result.bulkLoopMedianResidual = stats.bulkLoopMedianResidual;
     result.bulkLoopsSampled = stats.bulkLoopsSampled;
+    result.perAtomResidual = std::move(assignment.perAtomResidual);
     spdlog::info("FullCrystalContext: SELECTED cutoff {:.2f}A (rho {:.3f}A)", chosenCutoff, rho);
 
     result.selectedCutoff = chosenCutoff;

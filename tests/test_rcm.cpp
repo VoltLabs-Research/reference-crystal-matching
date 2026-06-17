@@ -81,6 +81,7 @@ bool loadFrame(const std::string& path, LammpsParser::Frame& frame){
 // full_crystal_context.cpp (filter by anchor species, dedup fractional coords).
 AnchorReference anchorFrom(const PerfectReference& ref, int anchorSpecies){
     AnchorReference anchor;
+    anchor.cellMatrix = ref.cellMatrix;
     anchor.cellLengthA = ref.cellLengthA;
     anchor.cellLengthB = ref.cellLengthB;
     anchor.cellLengthC = ref.cellLengthC;
