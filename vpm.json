@@ -1,0 +1,29 @@
+{
+  "name": "@voltlabs/reference-crystal-matching",
+  "version": "1.0.1",
+  "kind": "workflow",
+  "publisher": "voltlabs",
+  "description": "Registers an observed configuration against a perfect reference crystal of arbitrary composition/symmetry and emits the reconstructed-state contract (annotated dump + cluster tables + neighbor-lattice sidecar) for OpenDXA.",
+  "license": "MIT",
+  "homepage": "https://github.com/voltlabs-research/reference-crystal-matching",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/voltlabs-research/reference-crystal-matching"
+  },
+  "entrypoints": {
+    "binary": "reference-crystal-matching-plugin.zip",
+    "workflow": "plugin.json"
+  },
+  "platforms": [
+    "linux-x86_64",
+    "darwin-arm64",
+    "windows-x86_64"
+  ],
+  "coretoolkit": "1.0.0",
+  "files": [
+    "plugin.json",
+    "scripts",
+    "bin",
+    "lib"
+  ]
+}
