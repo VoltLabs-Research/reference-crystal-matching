@@ -27,9 +27,9 @@
 // header to replicate that order (otherwise Matrix3 resolves incomplete).
 #include <volt/core/volt.h>
 
-#include "grain_frame.h"
-#include "reference_lattice.h"
-#include "site_assignment.h"
+#include <volt/registration/grain_frame.h>
+#include <volt/registration/reference_lattice.h>
+#include <volt/registration/site_assignment.h>
 
 #include <volt/analysis/reference_crystal_matching_service.h>
 #include <volt/core/lammps_parser.h>
@@ -82,9 +82,6 @@ bool loadFrame(const std::string& path, LammpsParser::Frame& frame){
 AnchorReference anchorFrom(const PerfectReference& ref, int anchorSpecies){
     AnchorReference anchor;
     anchor.cellMatrix = ref.cellMatrix;
-    anchor.cellLengthA = ref.cellLengthA;
-    anchor.cellLengthB = ref.cellLengthB;
-    anchor.cellLengthC = ref.cellLengthC;
     anchor.targetSpecies = anchorSpecies;
     for(const BasisSite& site : ref.sites){
         if(site.species != anchorSpecies){

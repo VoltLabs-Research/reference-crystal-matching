@@ -1,0 +1,319 @@
+{
+  "summary": {
+    "total_dislocations": 27,
+    "total_length_A": 637.0,
+    "by_family": {
+      "[001]": {
+        "count": 10,
+        "total_length_A": 262.4
+      },
+      "[100]": {
+        "count": 16,
+        "total_length_A": 370.9
+      },
+      "junction/other": {
+        "count": 1,
+        "total_length_A": 3.7
+      }
+    }
+  },
+  "dislocations": [
+    {
+      "id": 13,
+      "length_A": 77.41,
+      "burgers_magnitude_A": 6.001,
+      "burgers_family": "[001]",
+      "burgers_vector_A": [
+        6.001,
+        0.035,
+        0.003
+      ]
+    },
+    {
+      "id": 21,
+      "length_A": 74.6,
+      "burgers_magnitude_A": 6.001,
+      "burgers_family": "[001]",
+      "burgers_vector_A": [
+        6.001,
+        0.035,
+        0.003
+      ]
+    },
+    {
+      "id": 23,
+      "length_A": 46.07,
+      "burgers_magnitude_A": 4.844,
+      "burgers_family": "[100]",
+      "burgers_vector_A": [
+        -0.029,
+        4.843,
+        0.038
+      ]
+    },
+    {
+      "id": 19,
+      "length_A": 41.26,
+      "burgers_magnitude_A": 4.844,
+      "burgers_family": "[100]",
+      "burgers_vector_A": [
+        -0.029,
+        4.843,
+        0.038
+      ]
+    },
+    {
+      "id": 2,
+      "length_A": 40.71,
+      "burgers_magnitude_A": 4.844,
+      "burgers_family": "[100]",
+      "burgers_vector_A": [
+        -0.029,
+        4.843,
+        0.038
+      ]
+    },
+    {
+      "id": 17,
+      "length_A": 35.18,
+      "burgers_magnitude_A": 4.844,
+      "burgers_family": "[100]",
+      "burgers_vector_A": [
+        -0.029,
+        4.843,
+        0.038
+      ]
+    },
+    {
+      "id": 15,
+      "length_A": 30.43,
+      "burgers_magnitude_A": 4.844,
+      "burgers_family": "[100]",
+      "burgers_vector_A": [
+        -0.029,
+        4.843,
+        0.038
+      ]
+    },
+    {
+      "id": 5,
+      "length_A": 29.12,
+      "burgers_magnitude_A": 4.844,
+      "burgers_family": "[100]",
+      "burgers_vector_A": [
+        -0.029,
+        4.843,
+        0.038
+      ]
+    },
+    {
+      "id": 11,
+      "length_A": 27.35,
+      "burgers_magnitude_A": 4.844,
+      "burgers_family": "[100]",
+      "burgers_vector_A": [
+        -0.029,
+        4.843,
+        0.038
+      ]
+    },
+    {
+      "id": 1,
+      "length_A": 26.72,
+      "burgers_magnitude_A": 6.001,
+      "burgers_family": "[001]",
+      "burgers_vector_A": [
+        6.001,
+        0.035,
+        0.003
+      ]
+    },
+    {
+      "id": 20,
+      "length_A": 25.94,
+      "burgers_magnitude_A": 4.844,
+      "burgers_family": "[100]",
+      "burgers_vector_A": [
+        -0.029,
+        4.843,
+        0.038
+      ]
+    },
+    {
+      "id": 3,
+      "length_A": 24.79,
+      "burgers_magnitude_A": 6.001,
+      "burgers_family": "[001]",
+      "burgers_vector_A": [
+        6.001,
+        0.035,
+        0.003
+      ]
+    },
+    {
+      "id": 0,
+      "length_A": 24.14,
+      "burgers_magnitude_A": 6.001,
+      "burgers_family": "[001]",
+      "burgers_vector_A": [
+        6.001,
+        0.035,
+        0.003
+      ]
+    },
+    {
+      "id": 7,
+      "length_A": 18.73,
+      "burgers_magnitude_A": 6.001,
+      "burgers_family": "[001]",
+      "burgers_vector_A": [
+        6.001,
+        0.035,
+        0.003
+      ]
+    },
+    {
+      "id": 12,
+      "length_A": 18.38,
+      "burgers_magnitude_A": 4.844,
+      "burgers_family": "[100]",
+      "burgers_vector_A": [
+        -0.029,
+        4.843,
+        0.038
+      ]
+    },
+    {
+      "id": 14,
+      "length_A": 17.44,
+      "burgers_magnitude_A": 4.844,
+      "burgers_family": "[100]",
+      "burgers_vector_A": [
+        0.029,
+        -4.843,
+        -0.038
+      ]
+    },
+    {
+      "id": 22,
+      "length_A": 17.33,
+      "burgers_magnitude_A": 4.844,
+      "burgers_family": "[100]",
+      "burgers_vector_A": [
+        0.029,
+        -4.843,
+        -0.038
+      ]
+    },
+    {
+      "id": 6,
+      "length_A": 14.57,
+      "burgers_magnitude_A": 4.844,
+      "burgers_family": "[100]",
+      "burgers_vector_A": [
+        -0.029,
+        4.843,
+        0.038
+      ]
+    },
+    {
+      "id": 10,
+      "length_A": 12.69,
+      "burgers_magnitude_A": 4.844,
+      "burgers_family": "[100]",
+      "burgers_vector_A": [
+        0.029,
+        -4.843,
+        -0.038
+      ]
+    },
+    {
+      "id": 25,
+      "length_A": 9.7,
+      "burgers_magnitude_A": 4.844,
+      "burgers_family": "[100]",
+      "burgers_vector_A": [
+        0.029,
+        -4.843,
+        -0.038
+      ]
+    },
+    {
+      "id": 4,
+      "length_A": 5.32,
+      "burgers_magnitude_A": 6.001,
+      "burgers_family": "[001]",
+      "burgers_vector_A": [
+        -6.001,
+        -0.035,
+        -0.003
+      ]
+    },
+    {
+      "id": 8,
+      "length_A": 4.75,
+      "burgers_magnitude_A": 6.001,
+      "burgers_family": "[001]",
+      "burgers_vector_A": [
+        6.001,
+        0.035,
+        0.003
+      ]
+    },
+    {
+      "id": 26,
+      "length_A": 3.68,
+      "burgers_magnitude_A": 7.712,
+      "burgers_family": "junction/other",
+      "burgers_vector_A": [
+        6.03,
+        -4.808,
+        -0.035
+      ]
+    },
+    {
+      "id": 9,
+      "length_A": 3.39,
+      "burgers_magnitude_A": 6.001,
+      "burgers_family": "[001]",
+      "burgers_vector_A": [
+        -6.001,
+        -0.035,
+        -0.003
+      ]
+    },
+    {
+      "id": 24,
+      "length_A": 3.14,
+      "burgers_magnitude_A": 4.844,
+      "burgers_family": "[100]",
+      "burgers_vector_A": [
+        0.029,
+        -4.843,
+        -0.038
+      ]
+    },
+    {
+      "id": 18,
+      "length_A": 2.53,
+      "burgers_magnitude_A": 6.001,
+      "burgers_family": "[001]",
+      "burgers_vector_A": [
+        6.001,
+        0.035,
+        0.003
+      ]
+    },
+    {
+      "id": 16,
+      "length_A": 1.59,
+      "burgers_magnitude_A": 4.844,
+      "burgers_family": "[100]",
+      "burgers_vector_A": [
+        -0.029,
+        4.843,
+        0.038
+      ]
+    }
+  ]
+}

@@ -1,5 +1,5 @@
 #include <volt/analysis/reference_crystal_matching_service.h>
-#include <volt/analysis/full_crystal_context.h>
+#include <volt/analysis/crystal_context.h>
 #include <volt/analysis/reconstructed_analysis_pipeline.h>
 #include <volt/analysis/structure_analysis.h>
 #include <volt/analysis/structure_analysis_context.h>
@@ -19,14 +19,7 @@
 
 namespace Volt{
 
-namespace{
-
-// Resolve per-atom species. LAMMPS maps only a column named "type" into
-// frame.types; when absent, frame.types defaults to all-1 (which would make the
-// anchor filter select every atom). Prefer the configured species column from
-// the parsed atom properties, fall back to frame.types when a real "type"
-// column was present.
-bool resolveAtomSpecies(const LammpsParser::Frame& frame,
+static bool resolveAtomSpecies(const LammpsParser::Frame& frame,
                         const std::string& speciesColumn,
                         std::vector<int>& out,
                         std::string& error){
@@ -49,21 +42,6 @@ bool resolveAtomSpecies(const LammpsParser::Frame& frame,
         return true;
     }
 
-    // Fall back to frame.types. A non-uniform frame.types is always real. A
-    // *uniform* frame.types is ambiguous: it is either a genuine single-species
-    // crystal (FCC/BCC/HCP/A7 — every atom legitimately type 1) or the LAMMPS
-    // "species" bug (a dump whose species live in a column the parser does not
-    // map to frame.types, leaving it defaulted to all-1).
-    //
-    // Discriminate by provenance — a real "type" column means the uniform value
-    // is authoritative:
-    //   * dump file: the parser records its columns in atomColumnOrder; accept
-    //     when it lists "type".
-    //   * data file (.lmp): columns are implicit (atomColumnOrder is cleared),
-    //     but a real "type" column is always present, marked by the "atom types"
-    //     header.
-    // A dump that has neither (e.g. only a "species" column) with uniform types
-    // is the bug, and is rejected.
     if(frame.types.size() == n){
         bool uniform = true;
         for(std::size_t i = 1; i < n && uniform; ++i){
@@ -86,9 +64,6 @@ bool resolveAtomSpecies(const LammpsParser::Frame& frame,
     return false;
 }
 
-// Exotic-structure loader: an "<name>.yml" in latticeDir carrying
-// anchor_species (or legacy cation_species) + reference_crystal
-// [+ full_crystal_cutoff].
 struct ExoticReference{
     std::string referenceCrystal;
     int anchorSpecies = 0;
@@ -96,7 +71,7 @@ struct ExoticReference{
     bool found = false;
 };
 
-ExoticReference loadExoticReference(const std::string& latticeDir,
+static ExoticReference loadExoticReference(const std::string& latticeDir,
                                     const std::string& name,
                                     std::string& error){
     ExoticReference exotic;
@@ -131,8 +106,6 @@ ExoticReference loadExoticReference(const std::string& latticeDir,
         error = "reference topology '" + name + "' is not a YAML map";
         return exotic;
     }
-    // Accept the new "anchor_species" key, falling back to legacy
-    // "cation_species" so pre-existing topology YAMLs keep working.
     const YAML::Node speciesNode = document["anchor_species"]
         ? document["anchor_species"]
         : document["cation_species"];
@@ -165,8 +138,6 @@ ExoticReference loadExoticReference(const std::string& latticeDir,
     return exotic;
 }
 
-} // namespace
-
 ReferenceCrystalMatchingService::ReferenceCrystalMatchingService() = default;
 
 void ReferenceCrystalMatchingService::setReferenceCrystal(std::string path){ _referenceCrystal = std::move(path); }
@@ -182,8 +153,6 @@ json ReferenceCrystalMatchingService::compute(
     const std::string& outputBase,
     const std::string& inputDumpPath
 ){
-    // Resolve reference via exotic YAML when requested and no explicit reference
-    // crystal was given.
     std::string topologyName = _topologyName;
     if(_referenceCrystal.empty() && !_referenceTopology.empty()){
         std::string error;
@@ -227,14 +196,14 @@ json ReferenceCrystalMatchingService::compute(
     try{
         StructureAnalysis analysis(context);
 
-        FullCrystalContextParams params;
+        CrystalContextParams params;
         params.referenceFile = _referenceCrystal;
         params.anchorSpecies = _anchorSpecies;
         params.bondCutoff    = _fullCrystalCutoff;
         params.topologyName  = topologyName;
 
-        FullCrystalContextResult fc =
-            buildFullCrystalContext(frame, atomSpecies, context, analysis, params);
+        CrystalContextResult fc =
+            buildCrystalContext(frame, atomSpecies, context, analysis, params);
         if(!fc.ok){
             return AnalysisResult::failure("Reference-crystal context: " + fc.message);
         }
@@ -248,10 +217,6 @@ json ReferenceCrystalMatchingService::compute(
             {"grain_snap_residual", fc.grainSnapResidual},
         };
 
-        // Metric-rescale handoff: the producer derives the isotropization factors
-        // from the (possibly anisotropic) reference cell, but the rescale of
-        // positions/cell/ideal vectors is performed by the consumer (OpenDXA's
-        // --metric_rescale). Report them ready to paste.
         char rescaleArg[96];
         std::snprintf(rescaleArg, sizeof(rescaleArg), "%.10g,%.10g,%.10g",
                       fc.metricRescaleX, fc.metricRescaleY, fc.metricRescaleZ);
@@ -275,13 +240,6 @@ json ReferenceCrystalMatchingService::compute(
             return AnalysisResult::failure(frameError);
         }
 
-        // Per-atom display table for the "Structure Identification" exposure
-        // (id, x/y/z, structure_name, structure_id, cluster_id, topology_name).
-        // RCM assigns every atom the same synthetic structure type (it is not a
-        // local classifier — DXA finds dislocations by Burgers-circuit closure,
-        // not by OTHER atoms). The per-atom defect signal is instead the RMS
-        // deviation from the reference site, emitted here as rcm_residual: low
-        // in the bulk crystal, high at surfaces and dislocation cores.
         if(!outputBase.empty()){
             const std::vector<double>& residual = fc.perAtomResidual;
             StructureIdentificationExport::AtomColumnWriter writeResidual;

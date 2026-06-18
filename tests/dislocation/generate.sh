@@ -1,18 +1,7 @@
-#!/usr/bin/env bash
-# Generate dislocation end-to-end fixtures: insert a dislocation into each
-# reference crystal with atomsk, run it through RCM (the producer) and then
-# OpenDXA (the consumer), and keep every artifact under tests/dislocation/<name>/.
-#
-# This proves the modularized RCM + OpenDXA detect dislocations across a wide
-# range of crystals — multi-species (rocksalt..cementite) AND single-species
-# Bravais lattices including non-orthogonal ones (FCC/BCC/HCP/A7). Outputs are
-# committed so the run can be inspected without re-running atomsk/RCM/DXA.
-#
-# Requires: atomsk on PATH, RCM + OpenDXA already built (Release).
 set -euo pipefail
 
-REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"          # reference-crystal-matching/
-ROOT="$(cd "$REPO/.." && pwd)"                                       # repos-git/
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"     
+ROOT="$(cd "$REPO/.." && pwd)"                           
 RCM="$REPO/build/Release/reference-crystal-matching"
 DXA="$ROOT/opendxa/build/Release/opendxa"
 LAT="$ROOT/opendxa/lattices"

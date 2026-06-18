@@ -7,9 +7,6 @@
 
 namespace Volt{
 
-// Generic order statistics over residual samples. Header-only: both the grain-
-// frame solver and the context builder need them, and they are too small to
-// warrant a translation unit.
 inline double medianOf(std::vector<double> values){
     if(values.empty()){
         return 0.0;

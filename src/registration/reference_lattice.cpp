@@ -1,4 +1,4 @@
-#include "reference_lattice.h"
+#include <volt/registration/reference_lattice.h>
 
 #include <algorithm>
 #include <array>
@@ -105,9 +105,6 @@ PerfectReference buildPerfectReference(const std::string& referenceFile, double 
     reference.cellLengthB = lengthB;
     reference.cellLengthC = lengthC;
 
-    // LAMMPS triclinic convention: cell edge vectors as matrix columns
-    //   a = (lengthA, 0, 0), b = (xy, lengthB, 0), c = (xz, yz, lengthC).
-    // For an orthogonal cell the tilts are 0 and this is diagonal.
     const Matrix3 cellMatrix(
         Vector3(lengthA, 0.0, 0.0),
         Vector3(tiltXY, lengthB, 0.0),
@@ -159,9 +156,6 @@ std::vector<Vector3> buildIdealNeighborVectors(const AnchorReference& anchorRefe
     constexpr double neighborCutoff = 6.15;
     const Matrix3& cellMatrix = anchorReference.cellMatrix;
 
-    // Cartesian position of a fractional coord = cellMatrix * fractional, which
-    // reduces to per-axis scaling for an orthogonal cell and handles tilt
-    // (HCP/A7 primitive cells) for non-orthogonal ones.
     std::vector<Vector3> replicatedPositions;
     for(const Vector3& fractional : anchorReference.idealFractional){
         for(int imageX = -2; imageX <= 2; ++imageX){

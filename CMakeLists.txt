@@ -10,15 +10,15 @@ file(GLOB PTM_MATH_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/dependencies/pt
 
 volt_add_plugin(reference-crystal-matching
     SOURCES
-        src/analysis/reference_lattice.cpp
-        src/analysis/grain_frame.cpp
-        src/analysis/neighbor_graph.cpp
-        src/analysis/site_assignment.cpp
-        src/analysis/full_crystal_context.cpp
-        src/analysis/reference_crystal_matching_service.cpp
+        src/registration/reference_lattice.cpp
+        src/registration/grain_frame.cpp
+        src/registration/neighbor_graph.cpp
+        src/registration/site_assignment.cpp
+        src/registration/crystal_context.cpp
+        src/registration/reference_crystal_matching_service.cpp
     MAIN_SOURCE src/plugin.cpp
     VENDOR_SOURCES ${PTM_MATH_SOURCES}
-    INCLUDE_DIRS dependencies/ptm_math src/analysis
+    INCLUDE_DIRS dependencies/ptm_math
     DEPENDENCIES
         structure-identification::structure-identification
         yaml-cpp::yaml-cpp
