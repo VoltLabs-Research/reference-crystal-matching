@@ -44,6 +44,10 @@
                   {
                     "key": "cementite",
                     "label": "Cementite (Fe3C)"
+                  },
+                  {
+                    "key": "kyanite",
+                    "label": "Kyanite (Al2SiO5)"
                   }
                 ]
               },
@@ -59,7 +63,7 @@
                 "argument": "species_column",
                 "type": "string",
                 "label": "Species Column",
-                "default": "species"
+                "default": "type"
               },
               {
                 "argument": "full_crystal_cutoff",
@@ -133,6 +137,12 @@
                 "sourceSuffix": "_cluster_transitions.table",
                 "contentType": "text/plain",
                 "description": "Cluster transitions table required by OpenDXA / LineReconstructionDXA / ElasticStrain."
+              },
+              {
+                "name": "contractValid",
+                "sourceSuffix": "_contract_valid.json",
+                "contentType": "application/json",
+                "description": "Fail-closed RCM reciprocal mapping contract and coverage metrics."
               },
               {
                 "name": "neighborLattice",

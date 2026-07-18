@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <string>
+#include <fstream>
 #include <vector>
 
 namespace Volt{
@@ -230,6 +231,34 @@ json ReferenceCrystalMatchingService::compute(
 
         spdlog::info("ReferenceCrystalMatching: anchors={} grainResidual={:.3f}A cutoff={:.2f}A",
                      fc.anchorAtoms, fc.grainSnapResidual, fc.selectedCutoff);
+
+        {
+            json contractValid = {
+                {"valid", fc.contractValid},
+                {"snap_residual_p90", fc.snapResidualP90},
+                {"snap_residual_p99", fc.snapResidualP99},
+                {"ambiguity_rho", fc.ambiguityRho},
+                {"grain_snap_residual", fc.grainSnapResidual},
+                {"grain_count", fc.grainCount},
+                {"selected_cutoff", fc.selectedCutoff},
+                {"anchor_atoms", fc.anchorAtoms},
+                {"topology_name", topologyName},
+            };
+            if(!outputBase.empty()){
+                std::ofstream out(outputBase + "_contract_valid.json");
+                out << contractValid.dump(2);
+            }
+            result["contract_valid"] = std::move(contractValid);
+        }
+        if(!fc.contractValid){
+            return AnalysisResult::failure(
+                "RCM contract INVALID: snap p90 " + std::to_string(fc.snapResidualP90) +
+                " A >= rho " + std::to_string(fc.ambiguityRho) +
+                " A. The reference crystal does not register this sample unambiguously "
+                "(incoherent/amorphous/wrong reference). No contract emitted. Override "
+                "with an explicit --full_crystal_cutoff only if you know the sample is coherent.");
+        }
+
         spdlog::info("ReferenceCrystalMatching: feed OpenDXA with "
                      "--reference_topology {} --metric_rescale {}",
                      topologyName, rescaleArg);
@@ -245,7 +274,7 @@ json ReferenceCrystalMatchingService::compute(
             StructureIdentificationExport::AtomColumnWriter writeResidual;
             if(!residual.empty()){
                 writeResidual = [&residual](ColumnarAtomWriter& writer,
-                                            std::size_t atomIndex, int /*structureType*/){
+                                            std::size_t atomIndex, int ){
                     const double r = atomIndex < residual.size() ? residual[atomIndex] : -1.0;
                     writer.field("rcm_residual", r);
                 };

@@ -26,6 +26,13 @@ struct CrystalContextResult{
     double grainSnapResidual = 0;
     double selectedCutoff = 0;
 
+    int grainCount = 1;
+
+    double snapResidualP99 = 0;
+    double snapResidualP90 = 0;
+    double ambiguityRho = 0;
+    bool contractValid = false;
+
     double metricRescaleX = 1.0, metricRescaleY = 1.0, metricRescaleZ = 1.0;
 
     std::shared_ptr<ParticleProperty> structureTypesStorage;

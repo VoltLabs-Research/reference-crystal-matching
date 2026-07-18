@@ -26,8 +26,9 @@ struct SiteMatchInputs{
     const LammpsParser::Frame& frame;
     const PerfectReference& reference;
     const std::vector<int>& atomSpecies;
-    Matrix3 grainRotation;
-    Matrix3 grainRotationTransposed;
+    const std::vector<int>& grainOfAtom;
+    const std::vector<Matrix3>& grainRotations;
+    const std::vector<Matrix3>& grainRotationsTransposed;
 };
 
 struct CutoffAssignment{
@@ -37,6 +38,7 @@ struct CutoffAssignment{
     std::vector<double> perAtomResidual;
     AssignmentStats stats;
     double snapResidualP99 = std::numeric_limits<double>::max();
+    double snapResidualP90 = std::numeric_limits<double>::max();
 };
 
 CutoffAssignment assignForCutoff(const SiteMatchInputs& inputs, double cutoff);

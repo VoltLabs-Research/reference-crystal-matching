@@ -1,6 +1,7 @@
 #include <volt/analysis/crystal_context.h>
 
 #include <volt/registration/grain_frame.h>
+#include <volt/registration/grain_segmentation.h>
 #include <volt/registration/reference_lattice.h>
 #include <volt/registration/site_assignment.h>
 
@@ -26,7 +27,8 @@ static void emitStructureContext(
     std::vector<Vector3>& overrides,
     std::size_t atomCount,
     double chosenCutoff,
-    const Matrix3& grainRotation,
+    const std::vector<int>& grainOfAtom,
+    const std::vector<Matrix3>& grainRotations,
     const std::string& topologyName,
     CrystalContextResult& result)
 {
@@ -52,9 +54,10 @@ static void emitStructureContext(
     }
     context.structureTypes = result.structureTypesStorage.get();
 
+    const int grainCount = static_cast<int>(grainRotations.size());
     context.atomClusters = std::make_shared<ParticleProperty>(atomCount, DataType::Int, 1, 0, true);
     for(std::size_t atomIndex = 0; atomIndex < atomCount; ++atomIndex){
-        context.atomClusters->setInt(static_cast<int>(atomIndex), 1);
+        context.atomClusters->setInt(static_cast<int>(atomIndex), grainOfAtom[atomIndex] + 1);
     }
 
     context.maximumNeighborDistance = chosenCutoff;
@@ -62,9 +65,21 @@ static void emitStructureContext(
     analysis.setNeighborLatticeVectorOverrides(std::move(overrides), static_cast<std::size_t>(MAX_NEIGHBORS));
 
     ClusterGraph& clusterGraph = analysis.clusterGraph();
-    Cluster* cluster = clusterGraph.createCluster(0, topologyName, 1);
-    cluster->orientation = grainRotation;
-    clusterGraph.createSelfTransition(cluster);
+    std::vector<Cluster*> clusters(static_cast<std::size_t>(grainCount), nullptr);
+    for(int grain = 0; grain < grainCount; ++grain){
+        Cluster* cluster = clusterGraph.createCluster(0, topologyName, grain + 1);
+        cluster->orientation = grainRotations[static_cast<std::size_t>(grain)];
+        clusterGraph.createSelfTransition(cluster);
+        clusters[static_cast<std::size_t>(grain)] = cluster;
+    }
+    for(int i = 0; i < grainCount; ++i){
+        for(int j = i + 1; j < grainCount; ++j){
+            const Matrix3 tmIToJ = grainRotations[static_cast<std::size_t>(j)].transposed() *
+                                   grainRotations[static_cast<std::size_t>(i)];
+            clusterGraph.createClusterTransition(
+                clusters[static_cast<std::size_t>(i)], clusters[static_cast<std::size_t>(j)], tmIToJ, 1);
+        }
+    }
 }
 
 CrystalContextResult buildCrystalContext(
@@ -97,12 +112,9 @@ CrystalContextResult buildCrystalContext(
                  reference.cellLengthA, reference.cellLengthB, reference.cellLengthC,
                  reference.sites.size(), referenceReach);
 
-    {
-        const double maxCellLength = std::max({reference.cellLengthA, reference.cellLengthB, reference.cellLengthC});
-        result.metricRescaleX = reference.cellLengthA / maxCellLength;
-        result.metricRescaleY = reference.cellLengthB / maxCellLength;
-        result.metricRescaleZ = reference.cellLengthC / maxCellLength;
-    }
+    result.metricRescaleX = 1.0;
+    result.metricRescaleY = 1.0;
+    result.metricRescaleZ = 1.0;
 
     AnchorReference anchorReference;
     anchorReference.cellMatrix = reference.cellMatrix;
@@ -136,7 +148,6 @@ CrystalContextResult buildCrystalContext(
     }
     result.grainSnapResidual = grainFrame.bulkSnapResidual;
     const Matrix3 grainRotation = grainFrame.rotation;
-    const Matrix3 grainRotationTransposed = grainRotation.transposed();
     spdlog::info("CrystalContext: grain frame recovered (residual {:.3f} A, {} anchors)",
                  grainFrame.bulkSnapResidual, grainFrame.anchorAtomCount);
 
@@ -152,8 +163,17 @@ CrystalContextResult buildCrystalContext(
         }
     }
 
+    const GrainSegmentation grains = segmentGrains(
+        frame.positions.data(), atomSpecies.data(), atomCount, frame.simulationCell,
+        anchorReference, grainRotation);
+    std::vector<Matrix3> grainRotationsT(grains.grainRotations.size());
+    for(std::size_t g = 0; g < grains.grainRotations.size(); ++g){
+        grainRotationsT[g] = grains.grainRotations[g].transposed();
+    }
+    result.grainCount = grains.grainCount;
+
     const SiteMatchInputs matchInputs{
-        frame, reference, atomSpecies, grainRotation, grainRotationTransposed};
+        frame, reference, atomSpecies, grains.grainOfAtom, grains.grainRotations, grainRotationsT};
 
     std::vector<double> candidates;
     if(params.bondCutoff > 0.0){
@@ -161,8 +181,9 @@ CrystalContextResult buildCrystalContext(
     }else{
         const double cellMin = std::min({reference.cellLengthA, reference.cellLengthB, reference.cellLengthC});
         const double step = std::max(0.1, cellMin / 24.0);
-        const double highestCutoff = std::max(0.85 * cellMin, 1.4 * firstNeighborDist);
-        const double lowestCutoff = std::max(step, 2.2);
+        const double firstShell = firstNeighborDist > 0.1 ? firstNeighborDist : 0.5 * cellMin;
+        const double lowestCutoff = std::max(step, 1.15 * firstShell);
+        const double highestCutoff = std::max({0.85 * cellMin, 1.4 * firstShell, lowestCutoff});
         for(double cutoff = highestCutoff; cutoff >= lowestCutoff - 1e-9; cutoff -= step){
             candidates.push_back(cutoff);
         }
@@ -173,9 +194,10 @@ CrystalContextResult buildCrystalContext(
     bool picked = false;
     for(double cutoff : candidates){
         CutoffAssignment trial = assignForCutoff(matchInputs, cutoff);
-        spdlog::info("CrystalContext: trial cutoff {:.2f} -> snap p99 {:.3f}A (rho {:.3f}), coord<= {}, idealEdges {}",
-                     cutoff, trial.snapResidualP99, rho, trial.stats.maxNeighborCount, trial.stats.edgesWithIdealVector);
-        if(trial.snapResidualP99 < rho || params.bondCutoff > 0.0){
+        spdlog::info("CrystalContext: trial cutoff {:.2f} -> snap p90 {:.3f}A p99 {:.3f}A (rho {:.3f}), coord<= {}, idealEdges {}",
+                     cutoff, trial.snapResidualP90, trial.snapResidualP99, rho,
+                     trial.stats.maxNeighborCount, trial.stats.edgesWithIdealVector);
+        if(trial.snapResidualP90 < rho || params.bondCutoff > 0.0){
             chosenCutoff = cutoff;
             assignment = std::move(trial);
             picked = true;
@@ -186,15 +208,33 @@ CrystalContextResult buildCrystalContext(
     if(!picked && !candidates.empty()){
         chosenCutoff = candidates.back();
         assignment = assignForCutoff(matchInputs, chosenCutoff);
-        spdlog::warn("CrystalContext: no cutoff kept snap p99 < rho {:.3f}A; using tightest {:.2f}A", rho, chosenCutoff);
+        spdlog::warn("CrystalContext: no cutoff kept snap p90 < rho {:.3f}A; using tightest {:.2f}A", rho, chosenCutoff);
+    }
+
+    if(chosenCutoff <= 0.0 || assignment.neighbors.offsets.size() < atomCount + 1){
+        result.selectedCutoff = chosenCutoff;
+        result.ambiguityRho = rho;
+        result.contractValid = false;
+        result.ok = true;
+        result.message = "no usable neighbour cutoff for this reference/sample "
+                         "(cell too small or no coherent crystal); contract rejected";
+        spdlog::error("CrystalContext: {}", result.message);
+        return result;
     }
 
     result.perAtomResidual = std::move(assignment.perAtomResidual);
     result.selectedCutoff = chosenCutoff;
-    spdlog::info("CrystalContext: SELECTED cutoff {:.2f}A (rho {:.3f}A)", chosenCutoff, rho);
+    result.snapResidualP99 = assignment.snapResidualP99;
+    result.snapResidualP90 = assignment.snapResidualP90;
+    result.ambiguityRho = rho;
+    result.contractValid = (assignment.snapResidualP90 < rho) || (params.bondCutoff > 0.0);
+    spdlog::info("CrystalContext: SELECTED cutoff {:.2f}A (rho {:.3f}A, snap p90 {:.3f}A p99 {:.3f}A, grains {}, contract {})",
+                 chosenCutoff, rho, assignment.snapResidualP90, assignment.snapResidualP99,
+                 result.grainCount, result.contractValid ? "VALID" : "INVALID");
 
     emitStructureContext(context, analysis, assignment.neighbors, assignment.overrides,
-                         atomCount, chosenCutoff, grainRotation, params.topologyName, result);
+                         atomCount, chosenCutoff, grains.grainOfAtom, grains.grainRotations,
+                         params.topologyName, result);
 
     result.ok = true;
     return result;

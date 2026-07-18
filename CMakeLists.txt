@@ -12,6 +12,7 @@ volt_add_plugin(reference-crystal-matching
     SOURCES
         src/registration/reference_lattice.cpp
         src/registration/grain_frame.cpp
+        src/registration/grain_segmentation.cpp
         src/registration/neighbor_graph.cpp
         src/registration/site_assignment.cpp
         src/registration/crystal_context.cpp
@@ -39,7 +40,8 @@ if(BUILD_TESTING)
     target_link_libraries(test_rcm PRIVATE reference-crystal-matching_lib TBB::tbb)
     target_compile_features(test_rcm PRIVATE cxx_std_23)
     target_compile_definitions(test_rcm PRIVATE
-        RCM_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
+        RCM_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures"
+        RCM_STRUCTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/structures")
     add_test(NAME rcm_suite
              COMMAND test_rcm "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
 endif()

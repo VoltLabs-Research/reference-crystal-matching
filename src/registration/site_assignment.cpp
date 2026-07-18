@@ -7,7 +7,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <queue>
 #include <unordered_map>
+#include <vector>
 
 namespace Volt{
 
@@ -70,6 +72,9 @@ public:
         out_.snapResidualP99 = snapResiduals_.empty()
             ? std::numeric_limits<double>::max()
             : percentileOf(snapResiduals_, 0.99);
+        out_.snapResidualP90 = snapResiduals_.empty()
+            ? std::numeric_limits<double>::max()
+            : percentileOf(snapResiduals_, 0.90);
         return std::move(out_);
     }
 
@@ -78,79 +83,173 @@ private:
         return out_.overrides[atomIndex * static_cast<std::size_t>(kNeighborSlots) + static_cast<std::size_t>(slot)];
     }
 
+    const Matrix3& grainRotation(std::size_t atomIndex) const{
+        return inputs_.grainRotations[static_cast<std::size_t>(inputs_.grainOfAtom[atomIndex])];
+    }
+    const Matrix3& grainRotationT(std::size_t atomIndex) const{
+        return inputs_.grainRotationsTransposed[static_cast<std::size_t>(inputs_.grainOfAtom[atomIndex])];
+    }
+
+    bool snapToSite(int species, const Vector3& predicted,
+                    Vector3& outFractional, double& outResidual, int& outSiteIndex) const{
+        const auto it = sitesBySpecies_.find(species);
+        if(it == sitesBySpecies_.end()){
+            return false;
+        }
+        double best = std::numeric_limits<double>::max();
+        for(int siteIndex : it->second){
+            const Vector3& siteFrac = inputs_.reference.sites[static_cast<std::size_t>(siteIndex)].fractional;
+            Vector3 cand;
+            for(int axis = 0; axis < 3; ++axis){
+                cand[axis] = siteFrac[axis] + std::round(predicted[axis] - siteFrac[axis]);
+            }
+            const double residual = (inputs_.reference.cellMatrix * (cand - predicted)).length();
+            if(residual < best){
+                best = residual;
+                outFractional = cand;
+                outSiteIndex = siteIndex;
+            }
+        }
+        outResidual = best;
+        return best < std::numeric_limits<double>::max();
+    }
+
+    int seedSiteForAtom(std::size_t atomIndex) const{
+        const AllAtomNeighbors& neighbors = out_.neighbors;
+        const int start = neighbors.offsets[atomIndex];
+        const int end = neighbors.offsets[atomIndex + 1];
+        const int species = inputs_.atomSpecies[atomIndex];
+        const auto it = sitesBySpecies_.find(species);
+        if(it == sitesBySpecies_.end()){
+            return -1;
+        }
+        int bestSite = -1;
+        double bestScore = std::numeric_limits<double>::max();
+        for(int siteIndex : it->second){
+            const BasisSite& site = inputs_.reference.sites[static_cast<std::size_t>(siteIndex)];
+            double score = 0;
+            for(int slot = start; slot < end; ++slot){
+                const Vector3 crystalDelta =
+                    grainRotationT(atomIndex) * neighbors.deltas[static_cast<std::size_t>(slot)];
+                const int neighborSpecies =
+                    inputs_.atomSpecies[static_cast<std::size_t>(neighbors.indices[static_cast<std::size_t>(slot)])];
+                double shellBest = cutoff_ * cutoff_;
+                for(const auto& [shellSpecies, shellVector] : site.shell){
+                    if(shellSpecies == neighborSpecies){
+                        shellBest = std::min(shellBest, (shellVector - crystalDelta).squaredLength());
+                    }
+                }
+                score += shellBest;
+            }
+            if(score < bestScore){
+                bestScore = score;
+                bestSite = siteIndex;
+            }
+        }
+        return bestSite;
+    }
+
     void assignBasisSites(){
-        const PerfectReference& reference = inputs_.reference;
         const AllAtomNeighbors& neighbors = out_.neighbors;
         AssignmentStats& stats = out_.stats;
 
-        std::unordered_map<int, std::vector<int>> sitesBySpecies;
-        for(int siteIndex = 0; siteIndex < static_cast<int>(reference.sites.size()); ++siteIndex){
-            sitesBySpecies[reference.sites[static_cast<std::size_t>(siteIndex)].species].push_back(siteIndex);
+        sitesBySpecies_.clear();
+        for(int siteIndex = 0; siteIndex < static_cast<int>(inputs_.reference.sites.size()); ++siteIndex){
+            sitesBySpecies_[inputs_.reference.sites[static_cast<std::size_t>(siteIndex)].species].push_back(siteIndex);
         }
+        const Matrix3 cellInverse = inputs_.reference.cellMatrix.inverse();
 
-        stats.minNeighborCount = std::numeric_limits<int>::max();
-
+        siteFractional_.assign(atomCount_, Vector3::Zero());
         out_.perAtomResidual.assign(atomCount_, -1.0);
         out_.basisSiteOfAtom.assign(atomCount_, -1);
+
+        stats.minNeighborCount = std::numeric_limits<int>::max();
         for(std::size_t atomIndex = 0; atomIndex < atomCount_; ++atomIndex){
-            const int start = neighbors.offsets[atomIndex];
-            const int end = neighbors.offsets[atomIndex + 1];
-            const int neighborCount = end - start;
+            const int neighborCount = neighbors.offsets[atomIndex + 1] - neighbors.offsets[atomIndex];
             stats.minNeighborCount = std::min(stats.minNeighborCount, neighborCount);
             stats.maxNeighborCount = std::max(stats.maxNeighborCount, neighborCount);
+            stats.edgesTotal += neighborCount;
             if(neighborCount == 0){
                 ++stats.atomsWithZeroNeighbors;
-                continue;
             }
-
-            const int centralSpecies = inputs_.atomSpecies[atomIndex];
-            std::vector<Vector3> crystalFrameDeltas(static_cast<std::size_t>(neighborCount));
-            for(int slot = 0; slot < neighborCount; ++slot){
-                crystalFrameDeltas[static_cast<std::size_t>(slot)] =
-                    inputs_.grainRotationTransposed * neighbors.deltas[static_cast<std::size_t>(start + slot)];
-            }
-
-            int bestSite = -1;
-            double bestScore = std::numeric_limits<double>::max();
-            const auto speciesSites = sitesBySpecies.find(centralSpecies);
-            if(speciesSites != sitesBySpecies.end()){
-                for(int siteIndex : speciesSites->second){
-                    const BasisSite& site = reference.sites[static_cast<std::size_t>(siteIndex)];
-                    double score = 0;
-                    for(int slot = 0; slot < neighborCount; ++slot){
-                        const int neighborSpecies =
-                            inputs_.atomSpecies[static_cast<std::size_t>(neighbors.indices[static_cast<std::size_t>(start + slot)])];
-                        double bestShellDistance = std::numeric_limits<double>::max();
-                        for(const auto& [shellSpecies, shellVector] : site.shell){
-                            if(shellSpecies != neighborSpecies){
-                                continue;
-                            }
-                            bestShellDistance = std::min(bestShellDistance,
-                                (shellVector - crystalFrameDeltas[static_cast<std::size_t>(slot)]).squaredLength());
-                        }
-                        if(bestShellDistance < std::numeric_limits<double>::max()){
-                            score += bestShellDistance;
-                        }else{
-                            score += cutoff_ * cutoff_;
-                        }
-                    }
-                    if(score < bestScore){
-                        bestScore = score;
-                        bestSite = siteIndex;
-                    }
-                }
-            }
-
-            stats.edgesTotal += neighborCount;
-            if(bestSite < 0){
-                ++stats.atomsBySpeciesUnassigned;
-                continue;
-            }
-            out_.basisSiteOfAtom[atomIndex] = bestSite;
-            out_.perAtomResidual[atomIndex] = std::sqrt(bestScore / static_cast<double>(neighborCount));
         }
         if(stats.minNeighborCount == std::numeric_limits<int>::max()){
             stats.minNeighborCount = 0;
+        }
+
+        struct Entry{
+            double residual;
+            std::size_t atom;
+            Vector3 fractional;
+            bool operator>(const Entry& other) const{ return residual > other.residual; }
+        };
+        std::priority_queue<Entry, std::vector<Entry>, std::greater<Entry>> frontier;
+
+        auto pushNeighbors = [&](std::size_t atomIndex){
+            const int start = neighbors.offsets[atomIndex];
+            const int end = neighbors.offsets[atomIndex + 1];
+            for(int slot = start; slot < end; ++slot){
+                const std::size_t neighbor =
+                    static_cast<std::size_t>(neighbors.indices[static_cast<std::size_t>(slot)]);
+                if(out_.basisSiteOfAtom[neighbor] >= 0){
+                    continue;
+                }
+                const Vector3 crystalDelta =
+                    grainRotationT(atomIndex) * neighbors.deltas[static_cast<std::size_t>(slot)];
+                const Vector3 predicted = siteFractional_[atomIndex] + cellInverse * crystalDelta;
+                Vector3 snapped;
+                double residual;
+                int siteIndex;
+                if(snapToSite(inputs_.atomSpecies[neighbor], predicted, snapped, residual, siteIndex)){
+                    frontier.push({residual, neighbor, snapped});
+                }
+            }
+        };
+
+        std::size_t assignedCount = 0;
+        for(std::size_t scan = 0; scan < atomCount_; ++scan){
+            if(out_.basisSiteOfAtom[scan] >= 0){
+                continue;
+            }
+            if(neighbors.offsets[scan + 1] - neighbors.offsets[scan] == 0){
+                continue;
+            }
+            const int seedSite = seedSiteForAtom(scan);
+            if(seedSite < 0){
+                ++stats.atomsBySpeciesUnassigned;
+                out_.basisSiteOfAtom[scan] = -2;
+                continue;
+            }
+            siteFractional_[scan] = inputs_.reference.sites[static_cast<std::size_t>(seedSite)].fractional;
+            out_.basisSiteOfAtom[scan] = seedSite;
+            out_.perAtomResidual[scan] = 0.0;
+            ++assignedCount;
+            pushNeighbors(scan);
+
+            while(!frontier.empty()){
+                const Entry entry = frontier.top();
+                frontier.pop();
+                if(out_.basisSiteOfAtom[entry.atom] >= 0){
+                    continue;
+                }
+                Vector3 snapped;
+                double residual;
+                int siteIndex;
+                if(!snapToSite(inputs_.atomSpecies[entry.atom], entry.fractional, snapped, residual, siteIndex)){
+                    continue;
+                }
+                siteFractional_[entry.atom] = entry.fractional;
+                out_.basisSiteOfAtom[entry.atom] = siteIndex;
+                out_.perAtomResidual[entry.atom] = entry.residual;
+                ++assignedCount;
+                pushNeighbors(entry.atom);
+            }
+        }
+
+        for(std::size_t atomIndex = 0; atomIndex < atomCount_; ++atomIndex){
+            if(out_.basisSiteOfAtom[atomIndex] == -2){
+                out_.basisSiteOfAtom[atomIndex] = -1;
+            }
         }
     }
 
@@ -177,7 +276,7 @@ private:
                     continue;
                 }
                 const Vector3& neighborFractional = reference.sites[static_cast<std::size_t>(neighborBasisSite)].fractional;
-                const Vector3 crystalFrameDelta = inputs_.grainRotationTransposed * neighbors.deltas[static_cast<std::size_t>(slot)];
+                const Vector3 crystalFrameDelta = grainRotationT(atomIndex) * neighbors.deltas[static_cast<std::size_t>(slot)];
 
                 const Vector3 measuredFractional = cellInverse * crystalFrameDelta;
                 const Vector3 basisFractional = neighborFractional - atomFractional;
@@ -186,10 +285,11 @@ private:
                     const double imageOffset = std::round(measuredFractional[axis] - basisFractional[axis]);
                     idealFractional[axis] = basisFractional[axis] + imageOffset;
                 }
-                const Vector3 idealLabFrame = inputs_.grainRotation * (cellMatrix * idealFractional);
+                const Vector3 idealCrystalFrame = cellMatrix * idealFractional;
 
-                overrideAt(atomIndex, slot - start) = idealLabFrame;
+                overrideAt(atomIndex, slot - start) = idealCrystalFrame;
                 if(atomInBulk && snapResiduals_.size() < 20000){
+                    const Vector3 idealLabFrame = grainRotation(atomIndex) * idealCrystalFrame;
                     snapResiduals_.push_back((neighbors.deltas[static_cast<std::size_t>(slot)] - idealLabFrame).length());
                 }
             }
@@ -199,8 +299,6 @@ private:
     void enforceReciprocity(){
         const AllAtomNeighbors& neighbors = out_.neighbors;
         AssignmentStats& stats = out_.stats;
-        // Loop bound from the neighbour graph, NOT atomCount_ (= frame.natoms).
-        // Do not unify them: this phase's self-check must walk the graph as built.
         const std::size_t atomCount = neighbors.offsets.size() - 1;
 
         for(std::size_t atomIndex = 0; atomIndex < atomCount; ++atomIndex){
@@ -214,6 +312,9 @@ private:
                 const int slotForward = slot - start;
                 const int slotReverse = slotInto(neighbors, static_cast<std::size_t>(neighbor), static_cast<int>(atomIndex));
                 if(slotReverse < 0){
+                    continue;
+                }
+                if(inputs_.grainOfAtom[atomIndex] != inputs_.grainOfAtom[static_cast<std::size_t>(neighbor)]){
                     continue;
                 }
                 Vector3& forwardVector = overrideAt(atomIndex, slotForward);
@@ -242,6 +343,9 @@ private:
                 const int neighbor = neighbors.indices[static_cast<std::size_t>(slot)];
                 const int slotReverse = slotInto(neighbors, static_cast<std::size_t>(neighbor), static_cast<int>(atomIndex));
                 if(slotReverse < 0){
+                    continue;
+                }
+                if(inputs_.grainOfAtom[atomIndex] != inputs_.grainOfAtom[static_cast<std::size_t>(neighbor)]){
                     continue;
                 }
                 const Vector3& reverseVector = overrideAt(static_cast<std::size_t>(neighbor), slotReverse);
@@ -303,6 +407,8 @@ private:
     BulkRegion bulk_;
     CutoffAssignment out_;
     std::vector<double> snapResiduals_;
+    std::unordered_map<int, std::vector<int>> sitesBySpecies_;
+    std::vector<Vector3> siteFractional_;
 };
 
 CutoffAssignment assignForCutoff(const SiteMatchInputs& inputs, double cutoff){
