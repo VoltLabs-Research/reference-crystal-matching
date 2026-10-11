@@ -2,11 +2,17 @@ cmake_minimum_required(VERSION 3.20 FATAL_ERROR)
 
 project(reference-crystal-matching VERSION 1.0.1 LANGUAGES CXX)
 
-find_package(coretoolkit REQUIRED)
-find_package(yaml-cpp REQUIRED)
-find_package(structure-identification REQUIRED)
+if(NOT TARGET coretoolkit::coretoolkit)
+    find_package(coretoolkit REQUIRED)
+endif()
+if(NOT TARGET yaml-cpp::yaml-cpp)
+    find_package(yaml-cpp REQUIRED)
+endif()
+if(NOT TARGET structure-identification::structure-identification)
+    find_package(structure-identification REQUIRED)
+endif()
 
-file(GLOB PTM_MATH_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/dependencies/ptm_math/*.cpp)
+file(GLOB PTM_MATH_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/dependencies/ptm_math/*.cpp)
 
 volt_add_plugin(reference-crystal-matching
     SOURCES
@@ -31,6 +37,9 @@ volt_add_plugin(reference-crystal-matching
 # reciprocity invariant. BUILD_TESTING defaults ON so `ctest` works after a
 # normal local build; the conan package build() passes -DBUILD_TESTING=OFF.
 option(BUILD_TESTING "Build the reference-crystal-matching test suite" ON)
+if(EMSCRIPTEN)
+    set(BUILD_TESTING OFF)
+endif()
 if(BUILD_TESTING)
     enable_testing()
     add_executable(test_rcm tests/test_rcm.cpp)
