@@ -1,6 +1,7 @@
 #include <volt/registration/grain_segmentation.h>
 #include <volt/registration/grain_frame.h>
 #include <volt/registration/neighbor_graph.h>
+#include <volt/core/progress.h>
 
 #include <spdlog/spdlog.h>
 #include <tbb/parallel_for.h>
@@ -118,11 +119,14 @@ GrainSegmentation segmentGrains(
 
     constexpr int kMaxGrains = 64;
     constexpr int kMinGrainAnchors = 50;
+    constexpr std::size_t kMaxLoggedGrains = 20;
     constexpr double residualTol = 0.55;
     const int minGrainSize = std::max<int>(kMinGrainAnchors, static_cast<int>(0.05 * anchorCount));
     std::vector<int> grainOfAnchor(anchorCount, -1);
     std::vector<Matrix3> grainFrames;
     Matrix3 candidate = globalRotation;
+    std::size_t unassignedAnchors = anchorCount;
+    const char* stopReason = "reached the grain limit";
 
     for(int g = 0; g < kMaxGrains; ++g){
         const int newGrainId = static_cast<int>(grainFrames.size());
@@ -140,6 +144,7 @@ GrainSegmentation segmentGrains(
             }
         }
         if(assigned == 0){
+            stopReason = "no unassigned anchor fits the next frame";
             break;
         }
         if(g > 0 && assigned < minGrainSize){
@@ -148,9 +153,14 @@ GrainSegmentation segmentGrains(
                     grainOfAnchor[a] = -1;
                 }
             }
+            stopReason = "the next grain would be below the minimum size";
             break;
         }
         grainFrames.push_back(candidate);
+        unassignedAnchors -= static_cast<std::size_t>(assigned);
+        if(grainFrames.size() <= kMaxLoggedGrains){
+            spdlog::info("  Grain {}: {} anchors ({:.1f}%)", grainFrames.size(), assigned, percentOf(assigned, anchorCount));
+        }
 
         std::vector<Point3> rest;
         for(std::size_t a = 0; a < anchorCount; ++a){
@@ -159,12 +169,14 @@ GrainSegmentation segmentGrains(
             }
         }
         if(static_cast<int>(rest.size()) < kMinGrainAnchors){
+            stopReason = "too few unassigned anchors left";
             break;
         }
         std::vector<int> restSpecies(rest.size(), anchorReference.targetSpecies);
         const GrainFrame nextFrame = recoverGrainFrame(
             rest.data(), restSpecies.data(), rest.size(), cell, anchorReference);
         if(!nextFrame.ok){
+            stopReason = "no grain frame fits the unassigned anchors";
             break;
         }
         bool duplicate = false;
@@ -175,6 +187,7 @@ GrainSegmentation segmentGrains(
             }
         }
         if(duplicate){
+            stopReason = "the next frame repeats an existing grain orientation";
             break;
         }
         candidate = nextFrame.rotation;
@@ -182,11 +195,13 @@ GrainSegmentation segmentGrains(
 
     out.grainCount = static_cast<int>(grainFrames.size());
     if(out.grainCount == 0){
+        spdlog::warn("No anchor fits the global grain frame; treating the sample as a single grain");
         out.grainRotations.push_back(globalRotation);
         out.grainCount = 1;
         std::fill(out.grainOfAtom.begin(), out.grainOfAtom.end(), 0);
         return out;
     }
+    spdlog::info("  Grain search stopped with {} anchors unassigned: {}", unassignedAnchors, stopReason);
     out.grainRotations = std::move(grainFrames);
 
     for(std::size_t a = 0; a < anchorCount; ++a){
@@ -214,14 +229,19 @@ GrainSegmentation segmentGrains(
                 }
             }
         }
+        std::size_t unreachedAtoms = 0;
         for(std::size_t atomIndex = 0; atomIndex < atomCount; ++atomIndex){
             if(out.grainOfAtom[atomIndex] < 0){
                 out.grainOfAtom[atomIndex] = 0;
+                ++unreachedAtoms;
             }
+        }
+        if(unreachedAtoms > 0){
+            spdlog::warn("{} atoms are not connected to any grain within {:.1f} A; assigned to grain 1",
+                         unreachedAtoms, AnchorReference::physicalBondCutoff);
         }
     }
 
-    spdlog::info("CrystalContext: grain segmentation -> {} grain(s)", out.grainCount);
     return out;
 }
 

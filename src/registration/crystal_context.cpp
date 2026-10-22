@@ -7,12 +7,15 @@
 
 #include <volt/structures/cluster_graph.h>
 #include <volt/structures/crystal_structure_types.h>
+#include <volt/core/progress.h>
 
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <map>
+#include <numbers>
 #include <string>
 #include <vector>
 
@@ -20,6 +23,11 @@ namespace Volt{
 
 static double ambiguityRho(double cellLengthA, double cellLengthB, double cellLengthC){
     return 0.5 * std::min({cellLengthA, cellLengthB, cellLengthC});
+}
+
+static double rotationAngleDegrees(const Matrix3& rotation){
+    const double cosine = std::clamp((rotation(0, 0) + rotation(1, 1) + rotation(2, 2) - 1.0) * 0.5, -1.0, 1.0);
+    return std::acos(cosine) * 180.0 / std::numbers::pi;
 }
 
 static std::string describeSiteSpecies(const std::vector<BasisSite>& sites){
@@ -30,6 +38,29 @@ static std::string describeSiteSpecies(const std::vector<BasisSite>& sites){
     std::string text;
     for(const auto& [species, count] : sitesPerSpecies){
         text += (text.empty() ? "species " : ", ") + std::to_string(species) + ": " + std::to_string(count);
+    }
+    return text;
+}
+
+// "147456 (64.3%), 81920 (35.7%)": atoms per grain, listing only the first few grains.
+static std::string describeGrainSizes(const std::vector<int>& grainOfAtom, int grainCount){
+    constexpr int kMaxListedGrains = 8;
+    std::vector<std::size_t> atomsPerGrain(static_cast<std::size_t>(std::max(grainCount, 0)), 0);
+    for(int grain : grainOfAtom){
+        if(grain >= 0 && grain < grainCount){
+            ++atomsPerGrain[static_cast<std::size_t>(grain)];
+        }
+    }
+    std::string text;
+    char item[48];
+    for(int grain = 0; grain < std::min(grainCount, kMaxListedGrains); ++grain){
+        const std::size_t count = atomsPerGrain[static_cast<std::size_t>(grain)];
+        std::snprintf(item, sizeof(item), "%s%zu (%.1f%%)", text.empty() ? "" : ", ",
+                      count, percentOf(count, grainOfAtom.size()));
+        text += item;
+    }
+    if(grainCount > kMaxListedGrains){
+        text += ", ...";
     }
     return text;
 }
@@ -153,6 +184,9 @@ CrystalContextResult buildCrystalContext(
         }
     }
 
+    spdlog::info("Recovering grain frame from species {} anchors ({} sublattice sites)...",
+                 params.anchorSpecies, anchorReference.idealFractional.size());
+    Stopwatch phaseTimer;
     const GrainFrame grainFrame = recoverGrainFrame(
         frame.positions.data(), atomSpecies.data(), atomCount, frame.simulationCell, anchorReference);
     result.anchorAtoms = grainFrame.anchorAtomCount;
@@ -162,8 +196,9 @@ CrystalContextResult buildCrystalContext(
     }
     result.grainSnapResidual = grainFrame.bulkSnapResidual;
     const Matrix3 grainRotation = grainFrame.rotation;
-    spdlog::info("CrystalContext: grain frame recovered (residual {:.3f} A, {} anchors)",
-                 grainFrame.bulkSnapResidual, grainFrame.anchorAtomCount);
+    spdlog::info("Grain frame recovered in {} from {} anchors: rotation {:.2f} deg, median bond residual {:.3f} A",
+                 phaseTimer.elapsed(), grainFrame.anchorAtomCount,
+                 rotationAngleDegrees(grainRotation), grainFrame.bulkSnapResidual);
 
     const double rho = ambiguityRho(reference.cellLengthA, reference.cellLengthB, reference.cellLengthC);
 
@@ -177,6 +212,8 @@ CrystalContextResult buildCrystalContext(
         }
     }
 
+    spdlog::info("Segmenting grains...");
+    phaseTimer.restart();
     const GrainSegmentation grains = segmentGrains(
         frame.positions.data(), atomSpecies.data(), atomCount, frame.simulationCell,
         anchorReference, grainRotation);
@@ -185,6 +222,8 @@ CrystalContextResult buildCrystalContext(
         grainRotationsT[g] = grains.grainRotations[g].transposed();
     }
     result.grainCount = grains.grainCount;
+    spdlog::info("Segmented {} grain(s) in {}; atoms per grain: {}",
+                 grains.grainCount, phaseTimer.elapsed(), describeGrainSizes(grains.grainOfAtom, grains.grainCount));
 
     const SiteMatchInputs matchInputs{
         frame, reference, atomSpecies, grains.grainOfAtom, grains.grainRotations, grainRotationsT};
