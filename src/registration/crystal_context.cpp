@@ -12,12 +12,26 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
+#include <string>
 #include <vector>
 
 namespace Volt{
 
 static double ambiguityRho(double cellLengthA, double cellLengthB, double cellLengthC){
     return 0.5 * std::min({cellLengthA, cellLengthB, cellLengthC});
+}
+
+static std::string describeSiteSpecies(const std::vector<BasisSite>& sites){
+    std::map<int, int> sitesPerSpecies;
+    for(const BasisSite& site : sites){
+        ++sitesPerSpecies[site.species];
+    }
+    std::string text;
+    for(const auto& [species, count] : sitesPerSpecies){
+        text += (text.empty() ? "species " : ", ") + std::to_string(species) + ": " + std::to_string(count);
+    }
+    return text;
 }
 
 static void emitStructureContext(
@@ -108,9 +122,9 @@ CrystalContextResult buildCrystalContext(
         result.message = "perfect reference: " + reference.message;
         return result;
     }
-    spdlog::info("CrystalContext: reference cell=({:.3f},{:.3f},{:.3f}) basis sites={} refReach={:.2f}",
+    spdlog::info("Reference crystal: cell {:.3f} x {:.3f} x {:.3f}, {} basis sites ({}), shell reach {:.2f} A",
                  reference.cellLengthA, reference.cellLengthB, reference.cellLengthC,
-                 reference.sites.size(), referenceReach);
+                 reference.sites.size(), describeSiteSpecies(reference.sites), referenceReach);
 
     result.metricRescaleX = 1.0;
     result.metricRescaleY = 1.0;
