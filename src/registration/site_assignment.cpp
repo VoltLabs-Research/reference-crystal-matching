@@ -355,7 +355,7 @@ private:
             }
         }
         if(reciprocityViolations > 0){
-            spdlog::error("CrystalContext: reciprocity self-check FAILED on {} edges (v_AB != -v_BA); "
+            spdlog::error("Reciprocity self-check FAILED on {} edges (v_AB != -v_BA); "
                           "Burgers circuits will not close", reciprocityViolations);
         }
     }

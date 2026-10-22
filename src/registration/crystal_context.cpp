@@ -65,6 +65,36 @@ static std::string describeGrainSizes(const std::vector<int>& grainOfAtom, int g
     return text;
 }
 
+static void logSiteAssignment(const std::vector<double>& perAtomResidual, const AssignmentStats& stats, double cutoff){
+    std::size_t assignedAtoms = 0;
+    double residualSum = 0.0;
+    double residualMax = 0.0;
+    for(double residual : perAtomResidual){
+        if(residual < 0.0){
+            continue;
+        }
+        ++assignedAtoms;
+        residualSum += residual;
+        residualMax = std::max(residualMax, residual);
+    }
+    const std::size_t atomCount = perAtomResidual.size();
+    spdlog::info("  Assigned {} of {} atoms to reference sites ({:.1f}%); rcm_residual mean {:.3f} A, max {:.3f} A",
+                 assignedAtoms, atomCount, percentOf(assignedAtoms, atomCount),
+                 assignedAtoms > 0 ? residualSum / static_cast<double>(assignedAtoms) : 0.0, residualMax);
+    spdlog::info("  Neighbor graph: {} edges, coordination {}-{}, {:.1f}% with ideal lattice vectors",
+                 stats.edgesTotal, stats.minNeighborCount, stats.maxNeighborCount,
+                 percentOf(stats.edgesWithIdealVector, stats.edgesTotal));
+    if(stats.bulkLoopsSampled > 0){
+        spdlog::info("  Bulk triangle closure: median {:.2e} A over {} loops",
+                     stats.bulkLoopMedianResidual, stats.bulkLoopsSampled);
+    }
+    if(assignedAtoms < atomCount){
+        spdlog::warn("{} atoms left without a reference site ({} with a species absent from the reference, "
+                     "{} with no neighbor within {:.2f} A)",
+                     atomCount - assignedAtoms, stats.atomsBySpeciesUnassigned, stats.atomsWithZeroNeighbors, cutoff);
+    }
+}
+
 static void emitStructureContext(
     StructureContext& context,
     StructureAnalysis& analysis,
@@ -242,14 +272,22 @@ CrystalContextResult buildCrystalContext(
         }
     }
 
+    if(params.bondCutoff > 0.0){
+        spdlog::info("Assigning reference sites with fixed bond cutoff {:.2f} A...", params.bondCutoff);
+    }else if(!candidates.empty()){
+        spdlog::info("Selecting bond cutoff from {} candidates ({:.2f} down to {:.2f} A), accepting snap p90 < rho {:.3f} A...",
+                     candidates.size(), candidates.front(), candidates.back(), rho);
+    }
+    phaseTimer.restart();
     CutoffAssignment assignment;
     double chosenCutoff = candidates.empty() ? params.bondCutoff : candidates.back();
     bool picked = false;
     for(double cutoff : candidates){
+        const Stopwatch trialTimer;
         CutoffAssignment trial = assignForCutoff(matchInputs, cutoff);
-        spdlog::info("CrystalContext: trial cutoff {:.2f} -> snap p90 {:.3f}A p99 {:.3f}A (rho {:.3f}), coord<= {}, idealEdges {}",
-                     cutoff, trial.snapResidualP90, trial.snapResidualP99, rho,
-                     trial.stats.maxNeighborCount, trial.stats.edgesWithIdealVector);
+        spdlog::info("  Cutoff {:.2f} A: snap p90 {:.3f} A, p99 {:.3f} A, max coordination {}, {} ideal edges ({})",
+                     cutoff, trial.snapResidualP90, trial.snapResidualP99,
+                     trial.stats.maxNeighborCount, trial.stats.edgesWithIdealVector, trialTimer.elapsed());
         if(trial.snapResidualP90 < rho || params.bondCutoff > 0.0){
             chosenCutoff = cutoff;
             assignment = std::move(trial);
@@ -261,7 +299,7 @@ CrystalContextResult buildCrystalContext(
     if(!picked && !candidates.empty()){
         chosenCutoff = candidates.back();
         assignment = assignForCutoff(matchInputs, chosenCutoff);
-        spdlog::warn("CrystalContext: no cutoff kept snap p90 < rho {:.3f}A; using tightest {:.2f}A", rho, chosenCutoff);
+        spdlog::warn("No cutoff kept snap p90 below rho {:.3f} A; using the tightest, {:.2f} A", rho, chosenCutoff);
     }
 
     if(chosenCutoff <= 0.0 || assignment.neighbors.offsets.size() < atomCount + 1){
@@ -271,7 +309,7 @@ CrystalContextResult buildCrystalContext(
         result.ok = true;
         result.message = "no usable neighbour cutoff for this reference/sample "
                          "(cell too small or no coherent crystal); contract rejected";
-        spdlog::error("CrystalContext: {}", result.message);
+        spdlog::error("Bond cutoff selection failed: {}", result.message);
         return result;
     }
 
@@ -281,9 +319,10 @@ CrystalContextResult buildCrystalContext(
     result.snapResidualP90 = assignment.snapResidualP90;
     result.ambiguityRho = rho;
     result.contractValid = (assignment.snapResidualP90 < rho) || (params.bondCutoff > 0.0);
-    spdlog::info("CrystalContext: SELECTED cutoff {:.2f}A (rho {:.3f}A, snap p90 {:.3f}A p99 {:.3f}A, grains {}, contract {})",
-                 chosenCutoff, rho, assignment.snapResidualP90, assignment.snapResidualP99,
-                 result.grainCount, result.contractValid ? "VALID" : "INVALID");
+    spdlog::info("Selected bond cutoff {:.2f} A in {}: snap p90 {:.3f} A, p99 {:.3f} A (rho {:.3f} A), contract {}",
+                 chosenCutoff, phaseTimer.elapsed(), assignment.snapResidualP90, assignment.snapResidualP99,
+                 rho, result.contractValid ? "VALID" : "INVALID");
+    logSiteAssignment(result.perAtomResidual, assignment.stats, chosenCutoff);
 
     emitStructureContext(context, analysis, assignment.neighbors, assignment.overrides,
                          atomCount, chosenCutoff, grains.grainOfAtom, grains.grainRotations,

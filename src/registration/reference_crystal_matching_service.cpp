@@ -278,9 +278,6 @@ json ReferenceCrystalMatchingService::compute(
         result["grain_snap_residual"] = fc.grainSnapResidual;
         result["topology_name"] = topologyName;
 
-        spdlog::info("ReferenceCrystalMatching: anchors={} grainResidual={:.3f}A cutoff={:.2f}A",
-                     fc.anchorAtoms, fc.grainSnapResidual, fc.selectedCutoff);
-
         {
             json contractValid = {
                 {"valid", fc.contractValid},
