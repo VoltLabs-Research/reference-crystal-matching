@@ -5,6 +5,7 @@
 #include <volt/analysis/structure_analysis_context.h>
 #include <volt/analysis/structure_identification_export.h>
 #include <volt/core/analysis_result.h>
+#include <volt/core/progress.h>
 #include <volt/structures/crystal_structure_types.h>
 
 #include <yaml-cpp/yaml.h>
@@ -16,6 +17,7 @@
 #include <filesystem>
 #include <string>
 #include <fstream>
+#include <utility>
 #include <vector>
 
 namespace Volt{
@@ -27,10 +29,14 @@ static bool resolveAtomSpecies(const LammpsParser::Frame& frame,
     const std::size_t n = static_cast<std::size_t>(frame.natoms);
 
     const LammpsParser::AtomColumn* column = frame.findAtomProperty(speciesColumn);
+    const bool requestedColumnFound = column != nullptr;
     if(!column && speciesColumn != "type"){
         column = frame.findAtomProperty("type");
     }
     if(column && column->size() == n){
+        if(!requestedColumnFound){
+            spdlog::warn("Species column '{}' not found; using column 'type'", speciesColumn);
+        }
         out.assign(n, 0);
         for(std::size_t i = 0; i < n; ++i){
             switch(column->dataType){
@@ -55,6 +61,9 @@ static bool resolveAtomSpecies(const LammpsParser::Frame& frame,
                 != frame.atomColumnOrder.end();
         const bool isDataFile = frame.findHeaderProperty("atom types") != nullptr;
         if(!uniform || hasTypeColumn || isDataFile){
+            if(speciesColumn != "type"){
+                spdlog::warn("Species column '{}' not usable; using atom types", speciesColumn);
+            }
             out = frame.types;
             return true;
         }
@@ -63,6 +72,41 @@ static bool resolveAtomSpecies(const LammpsParser::Frame& frame,
     error = "could not resolve per-atom species; dump has no usable '" + speciesColumn +
             "' or 'type' column. Pass --species_column <name>.";
     return false;
+}
+
+// "1: 32768 (14.3%), 2: 65536 (28.6%)". Only the first few distinct ids get their own entry so a
+// wrong --species_column (e.g. ids) cannot blow up the line or the bookkeeping.
+static std::string describeSpeciesCounts(const std::vector<int>& atomSpecies){
+    constexpr std::size_t kMaxListedSpecies = 8;
+    std::vector<std::pair<int, std::size_t>> counts;
+    std::size_t unlistedAtoms = 0;
+    for(int species : atomSpecies){
+        auto entry = std::find_if(counts.begin(), counts.end(), [species](const auto& item){
+            return item.first == species;
+        });
+        if(entry != counts.end()){
+            ++entry->second;
+        }else if(counts.size() < kMaxListedSpecies){
+            counts.emplace_back(species, 1);
+        }else{
+            ++unlistedAtoms;
+        }
+    }
+    std::sort(counts.begin(), counts.end());
+
+    std::string text;
+    char item[64];
+    for(const auto& [species, count] : counts){
+        std::snprintf(item, sizeof(item), "%s%d: %zu (%.1f%%)", text.empty() ? "" : ", ",
+                      species, count, percentOf(count, atomSpecies.size()));
+        text += item;
+    }
+    if(unlistedAtoms > 0){
+        std::snprintf(item, sizeof(item), ", other species: %zu (%.1f%%)",
+                      unlistedAtoms, percentOf(unlistedAtoms, atomSpecies.size()));
+        text += item;
+    }
+    return text;
 }
 
 struct ExoticReference{
@@ -167,6 +211,10 @@ json ReferenceCrystalMatchingService::compute(
             _fullCrystalCutoff = exotic.fullCrystalCutoff;
         }
         topologyName = _referenceTopology;
+        spdlog::info("Reference topology '{}' resolved to {} (anchor species {})",
+                     _referenceTopology,
+                     std::filesystem::path(_referenceCrystal).filename().string(),
+                     _anchorSpecies);
     }
 
     if(_referenceCrystal.empty()){
@@ -193,6 +241,7 @@ json ReferenceCrystalMatchingService::compute(
     if(!resolveAtomSpecies(frame, _speciesColumn, atomSpecies, speciesError)){
         return AnalysisResult::failure("Species resolution: " + speciesError);
     }
+    spdlog::info("Atom species: {}", describeSpeciesCounts(atomSpecies));
 
     try{
         StructureAnalysis analysis(context);
