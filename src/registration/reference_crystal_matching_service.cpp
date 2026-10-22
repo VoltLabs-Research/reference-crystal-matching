@@ -291,8 +291,14 @@ json ReferenceCrystalMatchingService::compute(
                 {"topology_name", topologyName},
             };
             if(!outputBase.empty()){
-                std::ofstream out(outputBase + "_contract_valid.json");
+                const std::string contractPath = outputBase + "_contract_valid.json";
+                std::ofstream out(contractPath);
                 out << contractValid.dump(2);
+                if(out){
+                    spdlog::info("Contract validity report written to {}", contractPath);
+                }else{
+                    spdlog::warn("Could not write the contract validity report to {}", contractPath);
+                }
             }
             result["contract_valid"] = std::move(contractValid);
         }
@@ -305,15 +311,17 @@ json ReferenceCrystalMatchingService::compute(
                 "with an explicit --full_crystal_cutoff only if you know the sample is coherent.");
         }
 
-        spdlog::info("ReferenceCrystalMatching: feed OpenDXA with "
-                     "--reference_topology {} --metric_rescale {}",
+        spdlog::info("Feed OpenDXA with --reference_topology {} --metric_rescale {}",
                      topologyName, rescaleArg);
 
+        spdlog::info("Writing annotated dump, cluster graph and neighbor lattice...");
+        const Stopwatch exportTimer;
         if(!AnalysisPipelineUtils::appendClusterOutputs(
             frame, outputBase, annotatedDumpPath, context, analysis, result, &frameError
         )){
             return AnalysisResult::failure(frameError);
         }
+        spdlog::info("Cluster outputs written in {}", exportTimer.elapsed());
 
         if(!outputBase.empty()){
             const std::vector<double>& residual = fc.perAtomResidual;
@@ -325,13 +333,15 @@ json ReferenceCrystalMatchingService::compute(
                     writer.field("rcm_residual", r);
                 };
             }
+            const std::string atomsPath = outputBase + "_atoms.parquet";
             StructureIdentificationExport::streamStructureIdentificationToParquet(
-                outputBase + "_atoms.parquet",
+                atomsPath,
                 frame,
                 analysis,
                 {},
                 writeResidual
             );
+            spdlog::info("Exported atoms data to: {}", atomsPath);
         }
 
         return result;
