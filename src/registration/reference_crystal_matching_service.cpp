@@ -252,6 +252,9 @@ json ReferenceCrystalMatchingService::compute(
         params.bondCutoff    = _fullCrystalCutoff;
         params.topologyName  = topologyName;
 
+        // The crystal context, the cluster outputs and the atoms parquet, weighed by how long each
+        // took on a 135k-atom forsterite sample.
+        ProgressSteps steps({8.0, 2.0, 0.5});
         CrystalContextResult fc =
             buildCrystalContext(frame, atomSpecies, context, analysis, params);
         if(!fc.ok){
@@ -314,6 +317,7 @@ json ReferenceCrystalMatchingService::compute(
         spdlog::info("Feed OpenDXA with --reference_topology {} --metric_rescale {}",
                      topologyName, rescaleArg);
 
+        steps.next("Writing cluster outputs");
         spdlog::info("Writing annotated dump, cluster graph and neighbor lattice...");
         const Stopwatch exportTimer;
         if(!AnalysisPipelineUtils::appendClusterOutputs(
@@ -322,6 +326,7 @@ json ReferenceCrystalMatchingService::compute(
             return AnalysisResult::failure(frameError);
         }
         spdlog::info("Cluster outputs written in {}", exportTimer.elapsed());
+        steps.next("Writing the atoms table");
 
         if(!outputBase.empty()){
             const std::vector<double>& residual = fc.perAtomResidual;

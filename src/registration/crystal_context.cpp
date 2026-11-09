@@ -214,6 +214,10 @@ CrystalContextResult buildCrystalContext(
         }
     }
 
+    // Grain frame recovery, grain segmentation and site assignment, which may try several bond
+    // cutoffs. None of them reports its own progress, so each step names itself.
+    ProgressSteps steps({2.0, 3.0, 4.0});
+    JobProgress::instance().setText("Recovering the grain frame");
     spdlog::info("Recovering grain frame from species {} anchors ({} sublattice sites)...",
                  params.anchorSpecies, anchorReference.idealFractional.size());
     Stopwatch phaseTimer;
@@ -242,6 +246,7 @@ CrystalContextResult buildCrystalContext(
         }
     }
 
+    steps.next("Segmenting grains");
     spdlog::info("Segmenting grains...");
     phaseTimer.restart();
     const GrainSegmentation grains = segmentGrains(
@@ -254,6 +259,7 @@ CrystalContextResult buildCrystalContext(
     result.grainCount = grains.grainCount;
     spdlog::info("Segmented {} grain(s) in {}; atoms per grain: {}",
                  grains.grainCount, phaseTimer.elapsed(), describeGrainSizes(grains.grainOfAtom, grains.grainCount));
+    steps.next("Assigning reference sites");
 
     const SiteMatchInputs matchInputs{
         frame, reference, atomSpecies, grains.grainOfAtom, grains.grainRotations, grainRotationsT};
