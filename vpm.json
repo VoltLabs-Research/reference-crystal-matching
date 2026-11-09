@@ -1,6 +1,6 @@
 {
   "name": "@voltlabs/reference-crystal-matching",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "kind": "workflow",
   "publisher": "voltlabs",
   "description": "Registers an observed configuration against a perfect reference crystal of arbitrary composition/symmetry and emits the reconstructed-state contract (annotated dump + cluster tables + neighbor-lattice sidecar) for OpenDXA.",
