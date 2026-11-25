@@ -20,6 +20,8 @@ struct AssignmentStats{
     long atomsBySpeciesUnassigned = 0;
     double bulkLoopMedianResidual = -1;
     int bulkLoopsSampled = 0;
+    // Edges within a grain whose two lattice vectors are not opposite: Burgers circuits through them do not close.
+    long reciprocityViolations = 0;
 };
 
 struct SiteMatchInputs{
@@ -32,6 +34,7 @@ struct SiteMatchInputs{
 };
 
 struct CutoffAssignment{
+    double cutoff = 0;
     AllAtomNeighbors neighbors;
     std::vector<Vector3> overrides;
     std::vector<int> basisSiteOfAtom;

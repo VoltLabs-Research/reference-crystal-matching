@@ -22,6 +22,8 @@ struct PerfectReference{
     double cellLengthA = 0;
     double cellLengthB = 0;
     double cellLengthC = 0;
+    // How far each site's neighbor shell reaches.
+    double shellReach = 0;
     std::vector<BasisSite> sites;
 };
 

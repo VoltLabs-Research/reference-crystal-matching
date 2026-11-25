@@ -10,6 +10,7 @@ namespace Volt{
 
 PerfectReference buildPerfectReference(const std::string& referenceFile, double cutoff){
     PerfectReference reference;
+    reference.shellReach = cutoff;
 
     std::ifstream input(referenceFile);
     if(!input){

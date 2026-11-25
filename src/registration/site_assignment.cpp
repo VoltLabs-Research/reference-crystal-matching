@@ -3,7 +3,6 @@
 
 #include <volt/structures/crystal_structure_types.h>
 
-#include <spdlog/spdlog.h>
 
 #include <algorithm>
 #include <cmath>
@@ -41,17 +40,6 @@ struct BulkRegion{
     }
 };
 
-static int slotInto(const AllAtomNeighbors& neighbors, std::size_t fromAtom, int targetAtom){
-    const int start = neighbors.offsets[fromAtom];
-    const int end = neighbors.offsets[fromAtom + 1];
-    for(int slot = start; slot < end; ++slot){
-        if(neighbors.indices[static_cast<std::size_t>(slot)] == targetAtom){
-            return slot - start;
-        }
-    }
-    return -1;
-}
-
 class SiteAssigner{
 public:
     SiteAssigner(const SiteMatchInputs& inputs, double cutoff)
@@ -65,6 +53,7 @@ public:
     }
 
     CutoffAssignment run(){
+        out_.cutoff = cutoff_;
         assignBasisSites();
         computeIdealOverrides();
         enforceReciprocity();
@@ -79,6 +68,17 @@ public:
     }
 
 private:
+    static int slotInto(const AllAtomNeighbors& neighbors, std::size_t fromAtom, int targetAtom){
+        const int start = neighbors.offsets[fromAtom];
+        const int end = neighbors.offsets[fromAtom + 1];
+        for(int slot = start; slot < end; ++slot){
+            if(neighbors.indices[static_cast<std::size_t>(slot)] == targetAtom){
+                return slot - start;
+            }
+        }
+        return -1;
+    }
+
     Vector3& overrideAt(std::size_t atomIndex, int slot){
         return out_.overrides[atomIndex * static_cast<std::size_t>(kNeighborSlots) + static_cast<std::size_t>(slot)];
     }
@@ -330,7 +330,7 @@ private:
         }
 
         stats.edgesWithIdealVector = 0;
-        long reciprocityViolations = 0;
+        stats.reciprocityViolations = 0;
         for(std::size_t atomIndex = 0; atomIndex < atomCount; ++atomIndex){
             const int start = neighbors.offsets[atomIndex];
             const int end = neighbors.offsets[atomIndex + 1];
@@ -350,13 +350,9 @@ private:
                 }
                 const Vector3& reverseVector = overrideAt(static_cast<std::size_t>(neighbor), slotReverse);
                 if(!reverseVector.isZero(1e-9) && !(forwardVector + reverseVector).isZero(1e-6)){
-                    ++reciprocityViolations;
+                    ++stats.reciprocityViolations;
                 }
             }
-        }
-        if(reciprocityViolations > 0){
-            spdlog::error("Reciprocity self-check FAILED on {} edges (v_AB != -v_BA); "
-                          "Burgers circuits will not close", reciprocityViolations);
         }
     }
 

@@ -1,6 +1,7 @@
 #include <volt/analysis/reference_crystal_matching_service.h>
 #include <volt/analysis/crystal_context.h>
 #include <volt/analysis/reconstructed_analysis_pipeline.h>
+#include <volt/analysis/reference_crystal_matching_log.h>
 #include <volt/analysis/structure_analysis.h>
 #include <volt/analysis/structure_analysis_context.h>
 #include <volt/analysis/structure_identification_export.h>
@@ -13,7 +14,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdio>
 #include <filesystem>
 #include <string>
 #include <fstream>
@@ -22,7 +22,7 @@
 
 namespace Volt{
 
-static bool resolveAtomSpecies(const LammpsParser::Frame& frame,
+bool ReferenceCrystalMatchingService::resolveAtomSpecies(const LammpsParser::Frame& frame,
                         const std::string& speciesColumn,
                         std::vector<int>& out,
                         std::string& error){
@@ -74,52 +74,12 @@ static bool resolveAtomSpecies(const LammpsParser::Frame& frame,
     return false;
 }
 
-// "1: 32768 (14.3%), 2: 65536 (28.6%)". Only the first few distinct ids get their own entry so a
-// wrong --species_column (e.g. ids) cannot blow up the line or the bookkeeping.
-static std::string describeSpeciesCounts(const std::vector<int>& atomSpecies){
-    constexpr std::size_t kMaxListedSpecies = 8;
-    std::vector<std::pair<int, std::size_t>> counts;
-    std::size_t unlistedAtoms = 0;
-    for(int species : atomSpecies){
-        auto entry = std::find_if(counts.begin(), counts.end(), [species](const auto& item){
-            return item.first == species;
-        });
-        if(entry != counts.end()){
-            ++entry->second;
-        }else if(counts.size() < kMaxListedSpecies){
-            counts.emplace_back(species, 1);
-        }else{
-            ++unlistedAtoms;
-        }
-    }
-    std::sort(counts.begin(), counts.end());
-
-    std::string text;
-    char item[64];
-    for(const auto& [species, count] : counts){
-        std::snprintf(item, sizeof(item), "%s%d: %zu (%.1f%%)", text.empty() ? "" : ", ",
-                      species, count, percentOf(count, atomSpecies.size()));
-        text += item;
-    }
-    if(unlistedAtoms > 0){
-        std::snprintf(item, sizeof(item), ", other species: %zu (%.1f%%)",
-                      unlistedAtoms, percentOf(unlistedAtoms, atomSpecies.size()));
-        text += item;
-    }
-    return text;
-}
-
-struct ExoticReference{
-    std::string referenceCrystal;
-    int anchorSpecies = 0;
-    double fullCrystalCutoff = 0.0;
-    bool found = false;
-};
-
-static ExoticReference loadExoticReference(const std::string& latticeDir,
+ReferenceCrystalMatchingService::ExoticReference ReferenceCrystalMatchingService::loadExoticReference(
+                                    const std::string& latticeDir,
                                     const std::string& name,
                                     std::string& error){
-    ExoticReference exotic;
+    ReferenceCrystalMatchingService::ExoticReference exotic;
+    exotic.name = name;
     if(latticeDir.empty() || name.empty()){
         return exotic;
     }
@@ -198,10 +158,11 @@ json ReferenceCrystalMatchingService::compute(
     const std::string& outputBase,
     const std::string& inputDumpPath
 ){
+    ReferenceCrystalMatchingLog log;
     std::string topologyName = _topologyName;
     if(_referenceCrystal.empty() && !_referenceTopology.empty()){
         std::string error;
-        ExoticReference exotic = loadExoticReference(_latticeDir, _referenceTopology, error);
+        const ExoticReference exotic = loadExoticReference(_latticeDir, _referenceTopology, error);
         if(!exotic.found){
             return AnalysisResult::failure("Reference topology: " + error);
         }
@@ -211,10 +172,7 @@ json ReferenceCrystalMatchingService::compute(
             _fullCrystalCutoff = exotic.fullCrystalCutoff;
         }
         topologyName = _referenceTopology;
-        spdlog::info("Reference topology '{}' resolved to {} (anchor species {})",
-                     _referenceTopology,
-                     std::filesystem::path(_referenceCrystal).filename().string(),
-                     _anchorSpecies);
+        log.dump(exotic);
     }
 
     if(_referenceCrystal.empty()){
@@ -241,7 +199,7 @@ json ReferenceCrystalMatchingService::compute(
     if(!resolveAtomSpecies(frame, _speciesColumn, atomSpecies, speciesError)){
         return AnalysisResult::failure("Species resolution: " + speciesError);
     }
-    spdlog::info("Atom species: {}", describeSpeciesCounts(atomSpecies));
+    log.dump(atomSpecies);
 
     try{
         StructureAnalysis analysis(context);
@@ -252,11 +210,14 @@ json ReferenceCrystalMatchingService::compute(
         params.bondCutoff    = _fullCrystalCutoff;
         params.topologyName  = topologyName;
 
-        // The crystal context, the cluster outputs and the atoms parquet, weighed by how long each
-        // took on a 135k-atom forsterite sample.
-        ProgressSteps steps({8.0, 2.0, 0.5});
+        // Weighed by how long each step took on a 135k-atom forsterite sample.
+        ProgressSteps steps({
+            {"Building the crystal context", 8.0},
+            {"Writing cluster outputs", 2.0},
+            {"Writing the atoms table", 0.5},
+        });
         CrystalContextResult fc =
-            buildCrystalContext(frame, atomSpecies, context, analysis, params);
+            buildCrystalContext(frame, atomSpecies, context, analysis, params, log);
         if(!fc.ok){
             return AnalysisResult::failure("Reference-crystal context: " + fc.message);
         }
@@ -270,17 +231,11 @@ json ReferenceCrystalMatchingService::compute(
             {"grain_snap_residual", fc.grainSnapResidual},
         };
 
-        char rescaleArg[96];
-        std::snprintf(rescaleArg, sizeof(rescaleArg), "%.10g,%.10g,%.10g",
-                      fc.metricRescaleX, fc.metricRescaleY, fc.metricRescaleZ);
-        result["metric_rescale"] = {
-            {"sx", fc.metricRescaleX}, {"sy", fc.metricRescaleY}, {"sz", fc.metricRescaleZ}
-        };
-        result["metric_rescale_arg"] = rescaleArg;
         result["selected_cutoff"] = fc.selectedCutoff;
         result["grain_snap_residual"] = fc.grainSnapResidual;
         result["topology_name"] = topologyName;
 
+        ContractReport contract{{}, false, fc.contractValid, topologyName};
         {
             json contractValid = {
                 {"valid", fc.contractValid},
@@ -294,17 +249,14 @@ json ReferenceCrystalMatchingService::compute(
                 {"topology_name", topologyName},
             };
             if(!outputBase.empty()){
-                const std::string contractPath = outputBase + "_contract_valid.json";
-                std::ofstream out(contractPath);
+                contract.path = outputBase + "_contract_valid.json";
+                std::ofstream out(contract.path);
                 out << contractValid.dump(2);
-                if(out){
-                    spdlog::info("Contract validity report written to {}", contractPath);
-                }else{
-                    spdlog::warn("Could not write the contract validity report to {}", contractPath);
-                }
+                contract.written = static_cast<bool>(out);
             }
             result["contract_valid"] = std::move(contractValid);
         }
+        log.dump(contract);
         if(!fc.contractValid){
             return AnalysisResult::failure(
                 "RCM contract INVALID: snap p90 " + std::to_string(fc.snapResidualP90) +
@@ -314,19 +266,15 @@ json ReferenceCrystalMatchingService::compute(
                 "with an explicit --full_crystal_cutoff only if you know the sample is coherent.");
         }
 
-        spdlog::info("Feed OpenDXA with --reference_topology {} --metric_rescale {}",
-                     topologyName, rescaleArg);
-
-        steps.next("Writing cluster outputs");
-        spdlog::info("Writing annotated dump, cluster graph and neighbor lattice...");
-        const Stopwatch exportTimer;
-        if(!AnalysisPipelineUtils::appendClusterOutputs(
+        steps.next();
+        const auto clusterOutputs = AnalysisPipelineUtils::appendClusterOutputs(
             frame, outputBase, annotatedDumpPath, context, analysis, result, &frameError
-        )){
+        );
+        if(!clusterOutputs){
             return AnalysisResult::failure(frameError);
         }
-        spdlog::info("Cluster outputs written in {}", exportTimer.elapsed());
-        steps.next("Writing the atoms table");
+        log.dump(clusterOutputs);
+        steps.next();
 
         if(!outputBase.empty()){
             const std::vector<double>& residual = fc.perAtomResidual;
@@ -338,15 +286,7 @@ json ReferenceCrystalMatchingService::compute(
                     writer.field("rcm_residual", r);
                 };
             }
-            const std::string atomsPath = outputBase + "_atoms.parquet";
-            StructureIdentificationExport::streamStructureIdentificationToParquet(
-                atomsPath,
-                frame,
-                analysis,
-                {},
-                writeResidual
-            );
-            spdlog::info("Exported atoms data to: {}", atomsPath);
+            log.dump(StructureIdentificationExport::writeAtomsTable(outputBase, frame, analysis, {}, writeResidual));
         }
 
         return result;

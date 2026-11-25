@@ -12,18 +12,6 @@
 
 namespace Volt{
 
-static Matrix3 orthonormalFrame(const Vector3& firstVector, const Vector3& secondVector){
-    const Vector3 axis1 = firstVector / firstVector.length();
-    Vector3 axis2 = secondVector - axis1 * secondVector.dot(axis1);
-    axis2 /= axis2.length();
-    const Vector3 axis3 = axis1.cross(axis2);
-    return Matrix3(axis1, axis2, axis3);
-}
-
-static double angleBetween(const Vector3& a, const Vector3& b){
-    return std::acos(std::max(-1.0, std::min(1.0, a.dot(b) / (a.length() * b.length()))));
-}
-
 class GrainFrameSolver{
 public:
     GrainFrameSolver(const Point3* positions, const int* species, std::size_t atomCount,
@@ -42,6 +30,18 @@ public:
     }
 
 private:
+    static Matrix3 orthonormalFrame(const Vector3& firstVector, const Vector3& secondVector){
+        const Vector3 axis1 = firstVector / firstVector.length();
+        Vector3 axis2 = secondVector - axis1 * secondVector.dot(axis1);
+        axis2 /= axis2.length();
+        const Vector3 axis3 = axis1.cross(axis2);
+        return Matrix3(axis1, axis2, axis3);
+    }
+
+    static double angleBetween(const Vector3& a, const Vector3& b){
+        return std::acos(std::max(-1.0, std::min(1.0, a.dot(b) / (a.length() * b.length()))));
+    }
+
     static constexpr int kNearestNeighbors = 16;
     static constexpr double bondCutoff = 6.2;
 

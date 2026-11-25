@@ -1,4 +1,5 @@
 #include <volt/analysis/crystal_context.h>
+#include <volt/analysis/reference_crystal_matching_log.h>
 
 #include <volt/registration/grain_frame.h>
 #include <volt/registration/grain_segmentation.h>
@@ -9,93 +10,16 @@
 #include <volt/structures/crystal_structure_types.h>
 #include <volt/core/progress.h>
 
-#include <spdlog/spdlog.h>
-
 #include <algorithm>
 #include <cmath>
-#include <cstdio>
-#include <map>
-#include <numbers>
 #include <string>
 #include <vector>
 
 namespace Volt{
 
-static double ambiguityRho(double cellLengthA, double cellLengthB, double cellLengthC){
-    return 0.5 * std::min({cellLengthA, cellLengthB, cellLengthC});
-}
+namespace CrystalContextDetail{
 
-static double rotationAngleDegrees(const Matrix3& rotation){
-    const double cosine = std::clamp((rotation(0, 0) + rotation(1, 1) + rotation(2, 2) - 1.0) * 0.5, -1.0, 1.0);
-    return std::acos(cosine) * 180.0 / std::numbers::pi;
-}
-
-static std::string describeSiteSpecies(const std::vector<BasisSite>& sites){
-    std::map<int, int> sitesPerSpecies;
-    for(const BasisSite& site : sites){
-        ++sitesPerSpecies[site.species];
-    }
-    std::string text;
-    for(const auto& [species, count] : sitesPerSpecies){
-        text += (text.empty() ? "species " : ", ") + std::to_string(species) + ": " + std::to_string(count);
-    }
-    return text;
-}
-
-// "147456 (64.3%), 81920 (35.7%)": atoms per grain, listing only the first few grains.
-static std::string describeGrainSizes(const std::vector<int>& grainOfAtom, int grainCount){
-    constexpr int kMaxListedGrains = 8;
-    std::vector<std::size_t> atomsPerGrain(static_cast<std::size_t>(std::max(grainCount, 0)), 0);
-    for(int grain : grainOfAtom){
-        if(grain >= 0 && grain < grainCount){
-            ++atomsPerGrain[static_cast<std::size_t>(grain)];
-        }
-    }
-    std::string text;
-    char item[48];
-    for(int grain = 0; grain < std::min(grainCount, kMaxListedGrains); ++grain){
-        const std::size_t count = atomsPerGrain[static_cast<std::size_t>(grain)];
-        std::snprintf(item, sizeof(item), "%s%zu (%.1f%%)", text.empty() ? "" : ", ",
-                      count, percentOf(count, grainOfAtom.size()));
-        text += item;
-    }
-    if(grainCount > kMaxListedGrains){
-        text += ", ...";
-    }
-    return text;
-}
-
-static void logSiteAssignment(const std::vector<double>& perAtomResidual, const AssignmentStats& stats, double cutoff){
-    std::size_t assignedAtoms = 0;
-    double residualSum = 0.0;
-    double residualMax = 0.0;
-    for(double residual : perAtomResidual){
-        if(residual < 0.0){
-            continue;
-        }
-        ++assignedAtoms;
-        residualSum += residual;
-        residualMax = std::max(residualMax, residual);
-    }
-    const std::size_t atomCount = perAtomResidual.size();
-    spdlog::info("  Assigned {} of {} atoms to reference sites ({:.1f}%); rcm_residual mean {:.3f} A, max {:.3f} A",
-                 assignedAtoms, atomCount, percentOf(assignedAtoms, atomCount),
-                 assignedAtoms > 0 ? residualSum / static_cast<double>(assignedAtoms) : 0.0, residualMax);
-    spdlog::info("  Neighbor graph: {} edges, coordination {}-{}, {:.1f}% with ideal lattice vectors",
-                 stats.edgesTotal, stats.minNeighborCount, stats.maxNeighborCount,
-                 percentOf(stats.edgesWithIdealVector, stats.edgesTotal));
-    if(stats.bulkLoopsSampled > 0){
-        spdlog::info("  Bulk triangle closure: median {:.2e} A over {} loops",
-                     stats.bulkLoopMedianResidual, stats.bulkLoopsSampled);
-    }
-    if(assignedAtoms < atomCount){
-        spdlog::warn("{} atoms left without a reference site ({} with a species absent from the reference, "
-                     "{} with no neighbor within {:.2f} A)",
-                     atomCount - assignedAtoms, stats.atomsBySpeciesUnassigned, stats.atomsWithZeroNeighbors, cutoff);
-    }
-}
-
-static void emitStructureContext(
+void emitStructureContext(
     StructureContext& context,
     StructureAnalysis& analysis,
     AllAtomNeighbors& neighbors,
@@ -157,12 +81,17 @@ static void emitStructureContext(
     }
 }
 
+}
+
+using namespace CrystalContextDetail;
+
 CrystalContextResult buildCrystalContext(
     const LammpsParser::Frame& frame,
     const std::vector<int>& atomSpecies,
     StructureContext& context,
     StructureAnalysis& analysis,
-    const CrystalContextParams& params)
+    const CrystalContextParams& params,
+    ReferenceCrystalMatchingLog& log)
 {
     CrystalContextResult result;
     const std::size_t atomCount = static_cast<std::size_t>(frame.natoms);
@@ -183,13 +112,7 @@ CrystalContextResult buildCrystalContext(
         result.message = "perfect reference: " + reference.message;
         return result;
     }
-    spdlog::info("Reference crystal: cell {:.3f} x {:.3f} x {:.3f}, {} basis sites ({}), shell reach {:.2f} A",
-                 reference.cellLengthA, reference.cellLengthB, reference.cellLengthC,
-                 reference.sites.size(), describeSiteSpecies(reference.sites), referenceReach);
-
-    result.metricRescaleX = 1.0;
-    result.metricRescaleY = 1.0;
-    result.metricRescaleZ = 1.0;
+    log.dump(reference);
 
     AnchorReference anchorReference;
     anchorReference.cellMatrix = reference.cellMatrix;
@@ -214,13 +137,11 @@ CrystalContextResult buildCrystalContext(
         }
     }
 
-    // Grain frame recovery, grain segmentation and site assignment, which may try several bond
-    // cutoffs. None of them reports its own progress, so each step names itself.
-    ProgressSteps steps({2.0, 3.0, 4.0});
-    JobProgress::instance().setText("Recovering the grain frame");
-    spdlog::info("Recovering grain frame from species {} anchors ({} sublattice sites)...",
-                 params.anchorSpecies, anchorReference.idealFractional.size());
-    Stopwatch phaseTimer;
+    ProgressSteps steps({
+        {"Recovering the grain frame", 2.0},
+        {"Segmenting grains", 3.0},
+        {"Assigning reference sites", 4.0},
+    });
     const GrainFrame grainFrame = recoverGrainFrame(
         frame.positions.data(), atomSpecies.data(), atomCount, frame.simulationCell, anchorReference);
     result.anchorAtoms = grainFrame.anchorAtomCount;
@@ -230,9 +151,7 @@ CrystalContextResult buildCrystalContext(
     }
     result.grainSnapResidual = grainFrame.bulkSnapResidual;
     const Matrix3 grainRotation = grainFrame.rotation;
-    spdlog::info("Grain frame recovered in {} from {} anchors: rotation {:.2f} deg, median bond residual {:.3f} A",
-                 phaseTimer.elapsed(), grainFrame.anchorAtomCount,
-                 rotationAngleDegrees(grainRotation), grainFrame.bulkSnapResidual);
+    log.dump(grainFrame);
 
     const double rho = ambiguityRho(reference.cellLengthA, reference.cellLengthB, reference.cellLengthC);
 
@@ -246,9 +165,7 @@ CrystalContextResult buildCrystalContext(
         }
     }
 
-    steps.next("Segmenting grains");
-    spdlog::info("Segmenting grains...");
-    phaseTimer.restart();
+    steps.next();
     const GrainSegmentation grains = segmentGrains(
         frame.positions.data(), atomSpecies.data(), atomCount, frame.simulationCell,
         anchorReference, grainRotation);
@@ -257,9 +174,8 @@ CrystalContextResult buildCrystalContext(
         grainRotationsT[g] = grains.grainRotations[g].transposed();
     }
     result.grainCount = grains.grainCount;
-    spdlog::info("Segmented {} grain(s) in {}; atoms per grain: {}",
-                 grains.grainCount, phaseTimer.elapsed(), describeGrainSizes(grains.grainOfAtom, grains.grainCount));
-    steps.next("Assigning reference sites");
+    log.dump(grains);
+    steps.next();
 
     const SiteMatchInputs matchInputs{
         frame, reference, atomSpecies, grains.grainOfAtom, grains.grainRotations, grainRotationsT};
@@ -278,22 +194,12 @@ CrystalContextResult buildCrystalContext(
         }
     }
 
-    if(params.bondCutoff > 0.0){
-        spdlog::info("Assigning reference sites with fixed bond cutoff {:.2f} A...", params.bondCutoff);
-    }else if(!candidates.empty()){
-        spdlog::info("Selecting bond cutoff from {} candidates ({:.2f} down to {:.2f} A), accepting snap p90 < rho {:.3f} A...",
-                     candidates.size(), candidates.front(), candidates.back(), rho);
-    }
-    phaseTimer.restart();
     CutoffAssignment assignment;
     double chosenCutoff = candidates.empty() ? params.bondCutoff : candidates.back();
     bool picked = false;
     for(double cutoff : candidates){
-        const Stopwatch trialTimer;
         CutoffAssignment trial = assignForCutoff(matchInputs, cutoff);
-        spdlog::info("  Cutoff {:.2f} A: snap p90 {:.3f} A, p99 {:.3f} A, max coordination {}, {} ideal edges ({})",
-                     cutoff, trial.snapResidualP90, trial.snapResidualP99,
-                     trial.stats.maxNeighborCount, trial.stats.edgesWithIdealVector, trialTimer.elapsed());
+        log.dump(trial);
         if(trial.snapResidualP90 < rho || params.bondCutoff > 0.0){
             chosenCutoff = cutoff;
             assignment = std::move(trial);
@@ -305,8 +211,9 @@ CrystalContextResult buildCrystalContext(
     if(!picked && !candidates.empty()){
         chosenCutoff = candidates.back();
         assignment = assignForCutoff(matchInputs, chosenCutoff);
-        spdlog::warn("No cutoff kept snap p90 below rho {:.3f} A; using the tightest, {:.2f} A", rho, chosenCutoff);
+        result.tightestCutoffFallback = true;
     }
+    result.assignmentStats = assignment.stats;
 
     if(chosenCutoff <= 0.0 || assignment.neighbors.offsets.size() < atomCount + 1){
         result.selectedCutoff = chosenCutoff;
@@ -315,7 +222,7 @@ CrystalContextResult buildCrystalContext(
         result.ok = true;
         result.message = "no usable neighbour cutoff for this reference/sample "
                          "(cell too small or no coherent crystal); contract rejected";
-        spdlog::error("Bond cutoff selection failed: {}", result.message);
+        log.dump(result);
         return result;
     }
 
@@ -325,16 +232,13 @@ CrystalContextResult buildCrystalContext(
     result.snapResidualP90 = assignment.snapResidualP90;
     result.ambiguityRho = rho;
     result.contractValid = (assignment.snapResidualP90 < rho) || (params.bondCutoff > 0.0);
-    spdlog::info("Selected bond cutoff {:.2f} A in {}: snap p90 {:.3f} A, p99 {:.3f} A (rho {:.3f} A), contract {}",
-                 chosenCutoff, phaseTimer.elapsed(), assignment.snapResidualP90, assignment.snapResidualP99,
-                 rho, result.contractValid ? "VALID" : "INVALID");
-    logSiteAssignment(result.perAtomResidual, assignment.stats, chosenCutoff);
 
     emitStructureContext(context, analysis, assignment.neighbors, assignment.overrides,
                          atomCount, chosenCutoff, grains.grainOfAtom, grains.grainRotations,
                          params.topologyName, result);
 
     result.ok = true;
+    log.dump(result);
     return result;
 }
 
