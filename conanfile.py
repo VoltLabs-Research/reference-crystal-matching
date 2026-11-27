@@ -4,7 +4,7 @@ from conan.tools.cmake import CMake, CMakeToolchain, CMakeDeps, cmake_layout
 
 class ReferenceCrystalMatchingConan(ConanFile):
     name = "reference-crystal-matching"
-    version = "1.2.0"
+    version = "1.2.1"
     package_type = "static-library"
     license = "MIT"
     settings = "os", "arch", "compiler", "build_type"
@@ -12,8 +12,8 @@ class ReferenceCrystalMatchingConan(ConanFile):
     requires = (
         "boost/1.88.0",
         "onetbb/2021.12.0",
-        "coretoolkit/[>=2.8]",
-        "structure-identification/[>=2.1]",
+        "coretoolkit/[>=2.9]",
+        "structure-identification/[>=2.4]",
         "spdlog/1.14.1",
         "nlohmann_json/3.11.3",
         "yaml-cpp/0.8.0",

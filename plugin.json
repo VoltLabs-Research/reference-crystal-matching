@@ -15,7 +15,7 @@
             "icon": "HiCubeTransparent",
             "author": "Rodolfo Herrera",
             "license": "MIT",
-            "version": "1.2.0",
+            "version": "1.2.1",
             "homepage": "https://github.com/rodyherrera/Volterra",
             "description": "Registra la configuracion observada contra un cristal de referencia perfecto (cualquier composicion/simetria) y emite el contrato de identificacion estructural (dump anotado + cluster graph + neighbor lattice) consumible por OpenDXA. Pensado para cristales multi-especie y de baja simetria donde un clasificador local (PTM/ACNA) no produce un mapeo elastico reciproco."
           }
