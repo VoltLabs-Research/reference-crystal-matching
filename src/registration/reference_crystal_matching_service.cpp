@@ -280,7 +280,7 @@ json ReferenceCrystalMatchingService::compute(
             const std::vector<double>& residual = fc.perAtomResidual;
             StructureIdentificationExport::AtomColumnWriter writeResidual;
             if(!residual.empty()){
-                writeResidual = [&residual](ColumnarAtomWriter& writer,
+                writeResidual = [&residual](ColumnarRowWriter& writer,
                                             std::size_t atomIndex, int ){
                     const double r = atomIndex < residual.size() ? residual[atomIndex] : -1.0;
                     writer.field("rcm_residual", r);
